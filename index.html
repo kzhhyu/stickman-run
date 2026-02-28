@@ -1,837 +1,1451 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <title>Stickman Run — Multiplayer</title>
+  <title>Stickman Run</title>
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body {
-      width: 100%; height: 100%;
-      background: #1a1a2e;
-      display: flex; flex-direction: column;
-      align-items: center; justify-content: center;
-      overflow: hidden;
-      font-family: 'Courier New', monospace;
-      color: #eee;
+    @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&display=swap');
+
+    :root {
+      --red: #e94560;
+      --cyan: #00d4ff;
+      --orange: #ff6b35;
+      --green: #a8ff3e;
+      --purple: #ff3ef5;
+      --bg: #0d0d1a;
+      --bg2: #13132a;
+      --bg3: #1a1a38;
+      --border: rgba(0, 212, 255, 0.18);
+      --text: #c8d8f0;
+      --dim: #4a5a7a;
     }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      background: var(--bg);
+      font-family: 'Share Tech Mono', monospace;
+      color: var(--text);
+      overflow: hidden;
+    }
+
+    /* ── SCANLINE OVERLAY ── */
+    body::after {
+      content: '';
+      pointer-events: none;
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0, 0, 0, 0.03) 2px, rgba(0, 0, 0, 0.03) 4px);
+    }
+
+    /* ══════════════════════════════════════════
+       SCREEN SYSTEM
+       Each "screen" is a full-page panel.
+       Only one is visible at a time.
+    ══════════════════════════════════════════ */
+    .screen {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      transition: opacity 0.25s, transform 0.25s;
+    }
+
+    .screen.hidden {
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(12px);
+    }
+
+    /* ── CANVAS SCREEN ── */
+    #screen-game {
+      background: #16213e;
+    }
+
     canvas {
       display: block;
       max-width: 100vw;
       max-height: 100vh;
     }
 
-    /* ── Lobby overlay (shown before game starts) ── */
-    #lobby {
-      position: fixed; inset: 0;
-      background: rgba(10,10,30,0.95);
-      display: flex; flex-direction: column;
-      align-items: center; justify-content: center;
-      gap: 16px; z-index: 10;
+    /* ── SHARED PANEL STYLE ── */
+    .panel {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 32px 40px;
+      width: min(500px, 92vw);
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      position: relative;
+      box-shadow: 0 0 60px rgba(0, 212, 255, 0.05), inset 0 1px 0 rgba(255, 255, 255, 0.04);
     }
-    #lobby h1 {
-      font-size: 2.2rem; letter-spacing: 4px;
-      color: #e94560;
-      text-shadow: 0 0 20px #e94560;
+
+    .panel-wide {
+      width: min(680px, 96vw);
     }
-    #lobby p  { color: #888; font-size: 0.85rem; }
-    #lobby input {
-      background: #0f3460; border: 1px solid #e94560;
-      color: #fff; padding: 10px 18px;
-      font-family: 'Courier New', monospace;
-      font-size: 1rem; border-radius: 4px;
-      outline: none; text-align: center; width: 240px;
+
+    /* Corner accents */
+    .panel::before,
+    .panel::after {
+      content: '';
+      position: absolute;
+      width: 14px;
+      height: 14px;
     }
-    #lobby input::placeholder { color: #555; }
-    #lobby button {
-      background: #e94560; color: #fff;
-      border: none; padding: 10px 32px;
-      font-family: 'Courier New', monospace;
-      font-size: 1rem; border-radius: 4px;
-      cursor: pointer; letter-spacing: 2px;
-      transition: background 0.2s;
+
+    .panel::before {
+      top: 0;
+      left: 0;
+      border-top: 2px solid var(--cyan);
+      border-left: 2px solid var(--cyan);
     }
-    #lobby button:hover { background: #c73652; }
-    #lobby button:disabled { background: #555; cursor: default; }
-    #status { color: #00d4ff; font-size: 0.9rem; min-height: 1.2em; }
+
+    .panel::after {
+      bottom: 0;
+      right: 0;
+      border-bottom: 2px solid var(--red);
+      border-right: 2px solid var(--red);
+    }
+
+    /* ── LOGO ── */
+    .logo {
+      font-family: 'Orbitron', monospace;
+      font-weight: 900;
+      font-size: clamp(1.8rem, 5vw, 3rem);
+      color: var(--red);
+      text-shadow: 0 0 30px var(--red), 0 0 60px rgba(233, 69, 96, 0.3);
+      letter-spacing: 4px;
+      text-align: center;
+      line-height: 1;
+    }
+
+    .logo-sub {
+      font-size: 0.7rem;
+      color: var(--dim);
+      letter-spacing: 6px;
+      text-align: center;
+      margin-top: 4px;
+    }
+
+    /* ── MENU BUTTONS ── */
+    .menu-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 0.95rem;
+      letter-spacing: 2px;
+      padding: 13px 24px;
+      cursor: pointer;
+      text-align: left;
+      transition: all 0.15s;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      border-radius: 3px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .menu-btn .icon {
+      font-size: 1.2rem;
+      width: 24px;
+      flex-shrink: 0;
+    }
+
+    .menu-btn .arrow {
+      margin-left: auto;
+      color: var(--dim);
+      transition: all 0.15s;
+    }
+
+    .menu-btn:hover {
+      border-color: var(--cyan);
+      color: var(--cyan);
+      background: rgba(0, 212, 255, 0.05);
+      padding-left: 30px;
+    }
+
+    .menu-btn:hover .arrow {
+      color: var(--cyan);
+      transform: translateX(4px);
+    }
+
+    .menu-btn.primary {
+      border-color: var(--red);
+      color: var(--red);
+    }
+
+    .menu-btn.primary:hover {
+      background: rgba(233, 69, 96, 0.1);
+      border-color: var(--red);
+      color: var(--red);
+    }
+
+    /* ── SECTION TITLE ── */
+    .section-title {
+      font-size: 0.7rem;
+      letter-spacing: 4px;
+      color: var(--dim);
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 8px;
+      text-transform: uppercase;
+    }
+
+    /* ── BACK BUTTON ── */
+    .back-btn {
+      background: none;
+      border: none;
+      color: var(--dim);
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 0.78rem;
+      letter-spacing: 2px;
+      cursor: pointer;
+      align-self: flex-start;
+      padding: 4px 0;
+      transition: color 0.15s;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .back-btn:hover {
+      color: var(--cyan);
+    }
+
+    /* ── INPUT ── */
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .field label {
+      font-size: 0.7rem;
+      letter-spacing: 3px;
+      color: var(--dim);
+    }
+
+    .field input {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 0.9rem;
+      padding: 10px 14px;
+      border-radius: 3px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    .field input:focus {
+      border-color: var(--cyan);
+    }
+
+    .field input::placeholder {
+      color: var(--dim);
+    }
+
+    /* ── ACTION BUTTON ── */
+    .action-btn {
+      background: var(--red);
+      border: none;
+      color: #fff;
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 0.9rem;
+      letter-spacing: 2px;
+      padding: 12px;
+      cursor: pointer;
+      border-radius: 3px;
+      transition: all 0.15s;
+      text-transform: uppercase;
+    }
+
+    .action-btn:hover {
+      background: #c73652;
+      transform: translateY(-1px);
+    }
+
+    .action-btn:disabled {
+      background: var(--dim);
+      cursor: default;
+      transform: none;
+    }
+
+    .action-btn.secondary {
+      background: transparent;
+      border: 1px solid var(--cyan);
+      color: var(--cyan);
+    }
+
+    .action-btn.secondary:hover {
+      background: rgba(0, 212, 255, 0.1);
+    }
+
+    /* ── ROOM LIST ── */
+    #roomList {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      max-height: 240px;
+      overflow-y: auto;
+      padding-right: 4px;
+    }
+
+    #roomList::-webkit-scrollbar {
+      width: 4px;
+    }
+
+    #roomList::-webkit-scrollbar-track {
+      background: var(--bg);
+    }
+
+    #roomList::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 2px;
+    }
+
+    .room-row {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 10px 14px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .room-row:hover {
+      border-color: var(--cyan);
+      background: rgba(0, 212, 255, 0.04);
+    }
+
+    .room-row .room-name {
+      font-size: 0.9rem;
+      color: var(--text);
+      flex: 1;
+    }
+
+    .room-row .room-host {
+      font-size: 0.72rem;
+      color: var(--dim);
+    }
+
+    .room-row .room-count {
+      font-size: 0.75rem;
+      color: var(--cyan);
+      background: rgba(0, 212, 255, 0.1);
+      padding: 2px 8px;
+      border-radius: 2px;
+      white-space: nowrap;
+    }
+
+    .room-row .lock-icon {
+      font-size: 0.85rem;
+      color: var(--dim);
+    }
+
+    .room-empty {
+      color: var(--dim);
+      font-size: 0.82rem;
+      text-align: center;
+      padding: 20px;
+    }
+
+    /* ── LOBBY WAITING ROOM ── */
+    .player-slots {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .player-slot {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 10px 14px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 0.88rem;
+    }
+
+    .player-slot .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+    }
+
+    .player-slot.empty {
+      color: var(--dim);
+      font-size: 0.78rem;
+      border-style: dashed;
+    }
+
+    /* ── LEADERBOARD ── */
+    .lb-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.85rem;
+    }
+
+    .lb-row:last-child {
+      border-bottom: none;
+    }
+
+    .lb-rank {
+      width: 28px;
+      color: var(--dim);
+      font-size: 0.78rem;
+      flex-shrink: 0;
+    }
+
+    .lb-name {
+      flex: 1;
+    }
+
+    .lb-score {
+      color: var(--cyan);
+    }
+
+    .lb-date {
+      font-size: 0.72rem;
+      color: var(--dim);
+    }
+
+    /* ── SETTINGS ── */
+    .setting-row {
+      display: flex;
+      align-items: center;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border);
+      gap: 14px;
+    }
+
+    .setting-row:last-child {
+      border-bottom: none;
+    }
+
+    .setting-label {
+      flex: 1;
+      font-size: 0.85rem;
+    }
+
+    .setting-desc {
+      font-size: 0.72rem;
+      color: var(--dim);
+      margin-top: 2px;
+    }
+
+    .toggle {
+      width: 42px;
+      height: 22px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 11px;
+      cursor: pointer;
+      position: relative;
+      transition: all 0.2s;
+      flex-shrink: 0;
+    }
+
+    .toggle.on {
+      background: rgba(0, 212, 255, 0.2);
+      border-color: var(--cyan);
+    }
+
+    .toggle::after {
+      content: '';
+      position: absolute;
+      width: 14px;
+      height: 14px;
+      background: var(--dim);
+      border-radius: 50%;
+      top: 3px;
+      left: 3px;
+      transition: all 0.2s;
+    }
+
+    .toggle.on::after {
+      background: var(--cyan);
+      transform: translateX(20px);
+    }
+
+    .color-swatches {
+      display: flex;
+      gap: 8px;
+    }
+
+    .swatch {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      cursor: pointer;
+      border: 2px solid transparent;
+      transition: all 0.15s;
+      flex-shrink: 0;
+    }
+
+    .swatch.active {
+      border-color: #fff;
+      transform: scale(1.2);
+    }
+
+    /* ── STATUS MSG ── */
+    .status-msg {
+      font-size: 0.78rem;
+      text-align: center;
+      min-height: 1.1em;
+      color: var(--cyan);
+      letter-spacing: 1px;
+    }
+
+    .status-msg.error {
+      color: var(--red);
+    }
+
+    /* ── PULSING WAITING TEXT ── */
+    @keyframes blink {
+
+      0%,
+      100% {
+        opacity: 1
+      }
+
+      50% {
+        opacity: 0.3
+      }
+    }
+
+    .blink {
+      animation: blink 1.4s infinite;
+    }
+
+    /* ── DIVIDER ── */
+    .divider {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 2px 0;
+    }
+
+    /* ── ROWS ── */
+    .row {
+      display: flex;
+      gap: 10px;
+    }
+
+    .row>* {
+      flex: 1;
+    }
   </style>
 </head>
+
 <body>
 
-<!-- ── Lobby UI ── -->
-<div id="lobby">
-  <h1>STICKMAN RUN</h1>
-  <p>multiplayer • race to survive longest</p>
-  <input id="nameInput" type="text" maxlength="16" placeholder="Enter your name" />
-  <button id="joinBtn" onclick="joinGame()">JOIN GAME</button>
-  <div id="status">connecting...</div>
-</div>
+  <!-- ══════════════════════════════════════════
+     SCREEN: MAIN MENU
+══════════════════════════════════════════ -->
+  <div class="screen" id="screen-main">
+    <div class="panel">
+      <div class="logo">STICKMAN RUN</div>
+      <div class="logo-sub">MULTIPLAYER EDITION</div>
+      <hr class="divider" style="margin:6px 0">
 
-<canvas id="gameCanvas"></canvas>
+      <div class="field">
+        <label>YOUR NAME</label>
+        <input id="mainNameInput" type="text" maxlength="16" placeholder="Enter your name" value="" />
+      </div>
 
-<script>
-  // ─────────────────────────────────────────────────────────────
-  //  CANVAS SETUP
-  // ─────────────────────────────────────────────────────────────
-  const VIRTUAL_W = 800;
-  const VIRTUAL_H = 300;
+      <button class="menu-btn primary" onclick="goTo('screen-singleplayer')">
+        <span class="icon">▶</span> SINGLEPLAYER
+        <span class="arrow">›</span>
+      </button>
+      <button class="menu-btn" onclick="goTo('screen-multiplayer')">
+        <span class="icon">🌐</span> MULTIPLAYER
+        <span class="arrow">›</span>
+      </button>
+      <button class="menu-btn" onclick="goTo('screen-leaderboard')">
+        <span class="icon">🏆</span> LEADERBOARD
+        <span class="arrow">›</span>
+      </button>
+      <button class="menu-btn" onclick="goTo('screen-settings')">
+        <span class="icon">⚙</span> SETTINGS
+        <span class="arrow">›</span>
+      </button>
+    </div>
+  </div>
 
-  const canvas = document.getElementById('gameCanvas');
-  const ctx    = canvas.getContext('2d');
+  <!-- ══════════════════════════════════════════
+     SCREEN: SINGLEPLAYER
+══════════════════════════════════════════ -->
+  <div class="screen hidden" id="screen-singleplayer">
+    <div class="panel">
+      <button class="back-btn" onclick="goTo('screen-main')">‹ BACK</button>
+      <div class="logo" style="font-size:1.6rem">SINGLEPLAYER</div>
+      <hr class="divider" />
+      <button class="menu-btn primary" onclick="startSingleplayer('normal')">
+        <span class="icon">🏃</span> NORMAL MODE
+        <span class="arrow">›</span>
+      </button>
+      <button class="menu-btn" onclick="startSingleplayer('hard')">
+        <span class="icon">💀</span> HARD MODE <span style="font-size:0.7rem;color:var(--dim)">(faster speed)</span>
+        <span class="arrow">›</span>
+      </button>
+      <div class="section-title" style="margin-top:4px">YOUR BEST</div>
+      <div id="spBestScore" style="color:var(--cyan);font-size:1.2rem">—</div>
+    </div>
+  </div>
 
-  function resizeCanvas() {
-    const scale = Math.min(window.innerWidth / VIRTUAL_W, window.innerHeight / VIRTUAL_H);
-    canvas.width  = VIRTUAL_W;
-    canvas.height = VIRTUAL_H;
-    canvas.style.width  = Math.floor(VIRTUAL_W * scale) + 'px';
-    canvas.style.height = Math.floor(VIRTUAL_H * scale) + 'px';
-  }
-  resizeCanvas();
-  window.addEventListener('resize', resizeCanvas);
+  <!-- ══════════════════════════════════════════
+     SCREEN: MULTIPLAYER LOBBY BROWSER
+══════════════════════════════════════════ -->
+  <div class="screen hidden" id="screen-multiplayer">
+    <div class="panel panel-wide">
+      <button class="back-btn" onclick="goTo('screen-main')">‹ BACK</button>
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <div class="logo" style="font-size:1.4rem">MULTIPLAYER</div>
+        <button class="action-btn secondary" style="padding:8px 16px;font-size:0.78rem" onclick="refreshRooms()">⟳
+          REFRESH</button>
+      </div>
+      <hr class="divider" />
 
-  // ─────────────────────────────────────────────────────────────
-  //  CONSTANTS
-  // ─────────────────────────────────────────────────────────────
-  const GROUND_Y       = 240;
-  const GRAVITY        = 0.6;
-  const JUMP_FORCE     = -13;
-  const SLIDE_DURATION = 40;
+      <div class="section-title">OPEN ROOMS</div>
+      <div id="roomList">
+        <div class="room-empty blink">connecting to server...</div>
+      </div>
 
-  // ─────────────────────────────────────────────────────────────
-  //  WEBSOCKET
-  // ─────────────────────────────────────────────────────────────
-  let ws       = null;
-  let myId     = null;
-  let myColor  = '#00d4ff';
-  let gameState = 'lobby';  // lobby | waiting | countdown | running | dead | gameover
+      <hr class="divider" />
+      <div class="row">
+        <button class="action-btn" onclick="goTo('screen-create-room')">＋ CREATE ROOM</button>
+        <button class="action-btn secondary" onclick="goTo('screen-quick-join')">⚡ QUICK JOIN</button>
+      </div>
+      <div class="status-msg" id="mpStatus"></div>
+    </div>
+  </div>
 
-  function connectWS() {
-    const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
-    ws = new WebSocket(`${protocol}://${location.host}`);
+  <!-- ══════════════════════════════════════════
+     SCREEN: CREATE ROOM
+══════════════════════════════════════════ -->
+  <div class="screen hidden" id="screen-create-room">
+    <div class="panel">
+      <button class="back-btn" onclick="goTo('screen-multiplayer')">‹ BACK</button>
+      <div class="logo" style="font-size:1.4rem">CREATE ROOM</div>
+      <hr class="divider" />
+      <div class="field">
+        <label>ROOM NAME</label>
+        <input id="roomNameInput" type="text" maxlength="30" placeholder="My Awesome Room" />
+      </div>
+      <div class="field">
+        <label>PASSWORD <span style="color:var(--dim)">(optional)</span></label>
+        <input id="roomPasswordInput" type="password" maxlength="20" placeholder="Leave blank for public" />
+      </div>
+      <button class="action-btn" onclick="createRoom()">CREATE &amp; WAIT FOR PLAYERS</button>
+      <div class="status-msg error" id="createRoomStatus"></div>
+    </div>
+  </div>
 
-    ws.onopen  = () => setStatus('Connected! Enter your name and join.');
-    ws.onclose = () => setStatus('Disconnected. Refresh to reconnect.');
-    ws.onerror = () => setStatus('Connection error.');
+  <!-- ══════════════════════════════════════════
+     SCREEN: JOIN WITH PASSWORD
+══════════════════════════════════════════ -->
+  <div class="screen hidden" id="screen-join-password">
+    <div class="panel">
+      <button class="back-btn" onclick="goTo('screen-multiplayer')">‹ BACK</button>
+      <div class="logo" style="font-size:1.4rem">🔒 PASSWORD</div>
+      <hr class="divider" />
+      <div style="font-size:0.85rem;color:var(--dim)" id="joinPasswordRoomName"></div>
+      <div class="field">
+        <label>ROOM PASSWORD</label>
+        <input id="joinPasswordInput" type="password" maxlength="20" placeholder="Enter password" />
+      </div>
+      <button class="action-btn" onclick="joinWithPassword()">JOIN ROOM</button>
+      <div class="status-msg error" id="joinPasswordStatus"></div>
+    </div>
+  </div>
 
-    ws.onmessage = (event) => {
-      const msg = JSON.parse(event.data);
-      handleServerMessage(msg);
+  <!-- ══════════════════════════════════════════
+     SCREEN: QUICK JOIN
+══════════════════════════════════════════ -->
+  <div class="screen hidden" id="screen-quick-join">
+    <div class="panel">
+      <button class="back-btn" onclick="goTo('screen-multiplayer')">‹ BACK</button>
+      <div class="logo" style="font-size:1.4rem">⚡ QUICK JOIN</div>
+      <hr class="divider" />
+      <div style="font-size:0.85rem;color:var(--dim);line-height:1.5">
+        Instantly joins the first available public room.<br />If none exist, a new room is created for you.
+      </div>
+      <button class="action-btn" onclick="quickJoin()">FIND MATCH</button>
+      <div class="status-msg" id="quickJoinStatus"></div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════
+     SCREEN: WAITING ROOM (in-room lobby)
+══════════════════════════════════════════ -->
+  <div class="screen hidden" id="screen-waiting">
+    <div class="panel">
+      <div class="logo" style="font-size:1.3rem" id="waitingRoomName">ROOM NAME</div>
+      <div style="font-size:0.72rem;color:var(--dim)" id="waitingRoomId"></div>
+      <hr class="divider" />
+      <div class="section-title">PLAYERS <span id="waitingCount" style="color:var(--cyan)">0/4</span></div>
+      <div class="player-slots" id="waitingPlayerSlots"></div>
+      <hr class="divider" />
+      <div class="status-msg blink" id="waitingStatus">Waiting for players...</div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════
+     SCREEN: LEADERBOARD
+══════════════════════════════════════════ -->
+  <div class="screen hidden" id="screen-leaderboard">
+    <div class="panel">
+      <button class="back-btn" onclick="goTo('screen-main')">‹ BACK</button>
+      <div class="logo" style="font-size:1.6rem">🏆 LEADERBOARD</div>
+      <div class="section-title">ALL-TIME TOP 10</div>
+      <div id="leaderboardList">
+        <div class="room-empty">No scores yet. Be the first!</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════
+     SCREEN: SETTINGS
+══════════════════════════════════════════ -->
+  <div class="screen hidden" id="screen-settings">
+    <div class="panel">
+      <button class="back-btn" onclick="goTo('screen-main')">‹ BACK</button>
+      <div class="logo" style="font-size:1.6rem">⚙ SETTINGS</div>
+      <hr class="divider" />
+
+      <div class="setting-row">
+        <div>
+          <div class="setting-label">SHOW HINTS</div>
+          <div class="setting-desc">JUMP ↑ / SLIDE ↓ warnings</div>
+        </div>
+        <div class="toggle on" id="toggleHints" onclick="toggleSetting('hints')"></div>
+      </div>
+
+      <div class="setting-row">
+        <div>
+          <div class="setting-label">PARTICLES</div>
+          <div class="setting-desc">Dust & coin burst effects</div>
+        </div>
+        <div class="toggle on" id="toggleParticles" onclick="toggleSetting('particles')"></div>
+      </div>
+
+      <div class="setting-row">
+        <div>
+          <div class="setting-label">STARS</div>
+          <div class="setting-desc">Parallax star background</div>
+        </div>
+        <div class="toggle on" id="toggleStars" onclick="toggleSetting('stars')"></div>
+      </div>
+
+      <div class="setting-row">
+        <div>
+          <div class="setting-label">YOUR COLOR</div>
+          <div class="setting-desc">Preferred stickman color</div>
+        </div>
+        <div class="color-swatches" id="colorSwatches">
+          <div class="swatch active" style="background:#00d4ff" data-color="#00d4ff" onclick="pickColor(this)"></div>
+          <div class="swatch" style="background:#ff6b35" data-color="#ff6b35" onclick="pickColor(this)"></div>
+          <div class="swatch" style="background:#a8ff3e" data-color="#a8ff3e" onclick="pickColor(this)"></div>
+          <div class="swatch" style="background:#ff3ef5" data-color="#ff3ef5" onclick="pickColor(this)"></div>
+          <div class="swatch" style="background:#ffd700" data-color="#ffd700" onclick="pickColor(this)"></div>
+        </div>
+      </div>
+
+      <button class="action-btn" style="margin-top:6px" onclick="saveSettings()">SAVE SETTINGS</button>
+      <div class="status-msg" id="settingsSaved"></div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════
+     SCREEN: GAME CANVAS
+══════════════════════════════════════════ -->
+  <div class="screen hidden" id="screen-game">
+    <canvas id="gameCanvas"></canvas>
+  </div>
+
+
+  <script>
+    // ═══════════════════════════════════════════════════════════════
+    //  SCREEN ROUTER
+    // ═══════════════════════════════════════════════════════════════
+    let currentScreen = 'screen-main';
+
+    function goTo(id) {
+      document.getElementById(currentScreen)?.classList.add('hidden');
+      document.getElementById(id)?.classList.remove('hidden');
+      currentScreen = id;
+
+      // Side effects on navigate
+      if (id === 'screen-multiplayer') refreshRooms();
+      if (id === 'screen-leaderboard') renderLeaderboard();
+      if (id === 'screen-singleplayer') {
+        const best = localStorage.getItem('stickmanBestSolo') || 0;
+        document.getElementById('spBestScore').textContent = best > 0 ? `${Math.floor(best)} pts` : '— no runs yet';
+      }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    //  SETTINGS
+    // ═══════════════════════════════════════════════════════════════
+    const settings = JSON.parse(localStorage.getItem('stickmanSettings') || '{"hints":true,"particles":true,"stars":true,"color":"#00d4ff"}');
+
+    function toggleSetting(key) {
+      settings[key] = !settings[key];
+      document.getElementById('toggle' + key.charAt(0).toUpperCase() + key.slice(1))
+        .classList.toggle('on', settings[key]);
+    }
+
+    function pickColor(el) {
+      document.querySelectorAll('.swatch').forEach(s => s.classList.remove('active'));
+      el.classList.add('active');
+      settings.color = el.dataset.color;
+    }
+
+    function saveSettings() {
+      localStorage.setItem('stickmanSettings', JSON.stringify(settings));
+      const msg = document.getElementById('settingsSaved');
+      msg.textContent = 'Settings saved!';
+      setTimeout(() => msg.textContent = '', 1500);
+    }
+
+    // Restore toggle UI on load
+    document.addEventListener('DOMContentLoaded', () => {
+      ['hints', 'particles', 'stars'].forEach(k => {
+        document.getElementById('toggle' + k.charAt(0).toUpperCase() + k.slice(1))
+          .classList.toggle('on', settings[k]);
+      });
+      document.querySelectorAll('.swatch').forEach(s => {
+        if (s.dataset.color === settings.color) s.classList.add('active');
+        else s.classList.remove('active');
+      });
+
+      // Restore name
+      const savedName = localStorage.getItem('stickmanName') || '';
+      if (savedName) document.getElementById('mainNameInput').value = savedName;
+    });
+
+    function getPlayerName() {
+      const name = document.getElementById('mainNameInput').value.trim() || 'Anonymous';
+      localStorage.setItem('stickmanName', name);
+      return name;
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    //  WEBSOCKET
+    // ═══════════════════════════════════════════════════════════════
+    let ws = null;
+    let myId = null;
+    let myColor = settings.color;
+    let myRoomId = null;
+
+    // Pending join (for password-protected rooms)
+    let pendingJoinRoomId = null;
+    let pendingJoinRoomName = null;
+
+    function connectWS() {
+      const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
+      ws = new WebSocket(`${protocol}://${location.host}`);
+      ws.onopen = () => console.log('WS connected');
+      ws.onclose = () => setTimeout(connectWS, 2000); // auto-reconnect
+      ws.onerror = () => { };
+      ws.onmessage = (e) => handleServerMessage(JSON.parse(e.data));
+    }
+
+    function wsSend(obj) {
+      if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+    }
+
+    // ── Room list cache ───────────────────────────────────────────
+    let cachedRooms = [];
+    let cachedLb = [];
+
+    function refreshRooms() {
+      wsSend({ type: 'get_rooms' });
+    }
+
+    function renderRoomList(rooms) {
+      cachedRooms = rooms;
+      const el = document.getElementById('roomList');
+      if (rooms.length === 0) {
+        el.innerHTML = '<div class="room-empty">No open rooms. Create one!</div>';
+        return;
+      }
+      el.innerHTML = rooms.map(r => `
+    <div class="room-row" onclick="clickRoom('${r.id}','${r.hasPassword}','${escHtml(r.name)}')">
+      <div>
+        <div class="room-name">${escHtml(r.name)}</div>
+        <div class="room-host">hosted by ${escHtml(r.host)}</div>
+      </div>
+      ${r.hasPassword ? '<span class="lock-icon">🔒</span>' : ''}
+      <div class="room-count">${r.playerCount}/${r.maxPlayers}</div>
+    </div>
+  `).join('');
+    }
+
+    function escHtml(s) {
+      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function clickRoom(roomId, hasPassword, roomName) {
+      if (hasPassword === 'true') {
+        pendingJoinRoomId = roomId;
+        pendingJoinRoomName = roomName;
+        document.getElementById('joinPasswordRoomName').textContent = `Joining: ${roomName}`;
+        document.getElementById('joinPasswordInput').value = '';
+        document.getElementById('joinPasswordStatus').textContent = '';
+        goTo('screen-join-password');
+      } else {
+        doJoinRoom(roomId, '');
+      }
+    }
+
+    function joinWithPassword() {
+      const pw = document.getElementById('joinPasswordInput').value;
+      doJoinRoom(pendingJoinRoomId, pw);
+    }
+
+    function doJoinRoom(roomId, password) {
+      wsSend({ type: 'join_room', roomId, password, playerName: getPlayerName() });
+    }
+
+    function createRoom() {
+      const roomName = document.getElementById('roomNameInput').value.trim() || `${getPlayerName()}'s Room`;
+      const password = document.getElementById('roomPasswordInput').value;
+      document.getElementById('createRoomStatus').textContent = '';
+      wsSend({ type: 'create_room', roomName, password, playerName: getPlayerName() });
+    }
+
+    function quickJoin() {
+      document.getElementById('quickJoinStatus').textContent = 'Searching...';
+      const publicRoom = cachedRooms.find(r => !r.hasPassword);
+      if (publicRoom) {
+        doJoinRoom(publicRoom.id, '');
+      } else {
+        // No room — create one
+        wsSend({ type: 'create_room', roomName: `${getPlayerName()}'s Room`, password: '', playerName: getPlayerName() });
+        document.getElementById('quickJoinStatus').textContent = 'No rooms found — creating one...';
+      }
+    }
+
+    // ── Waiting room UI ───────────────────────────────────────────
+    let waitingPlayers = {};
+
+    function updateWaitingRoom(players) {
+      waitingPlayers = players;
+      const slots = document.getElementById('waitingPlayerSlots');
+      const MAX = 4;
+      const pList = Object.values(players);
+      const count = pList.length;
+      document.getElementById('waitingCount').textContent = `${count}/${MAX}`;
+
+      let html = pList.map(p => `
+    <div class="player-slot">
+      <div class="dot" style="background:${p.color}"></div>
+      <span>${escHtml(p.name)}</span>
+      ${p.id === myId ? '<span style="color:var(--dim);font-size:0.72rem;margin-left:auto">(you)</span>' : ''}
+    </div>
+  `).join('');
+
+      for (let i = count; i < MAX; i++) {
+        html += `<div class="player-slot empty">— waiting for player ${i + 1}...</div>`;
+      }
+      slots.innerHTML = html;
+    }
+
+    // ── Leaderboard ───────────────────────────────────────────────
+    function renderLeaderboard(entries) {
+      if (entries) cachedLb = entries;
+      const el = document.getElementById('leaderboardList');
+      if (!cachedLb.length) {
+        el.innerHTML = '<div class="room-empty">No scores yet. Be the first!</div>';
+        return;
+      }
+      const medals = ['🥇', '🥈', '🥉'];
+      el.innerHTML = cachedLb.map((e, i) => `
+    <div class="lb-row">
+      <div class="lb-rank">${medals[i] || (i + 1)}</div>
+      <div class="lb-name">${escHtml(e.name)}</div>
+      <div class="lb-score">${e.score}</div>
+      <div class="lb-date">${e.date}</div>
+    </div>
+  `).join('');
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    //  SERVER MESSAGE HANDLER
+    // ═══════════════════════════════════════════════════════════════
+    let remotePlayers = {};
+    let gameOverData = null;
+
+    function handleServerMessage(msg) {
+      switch (msg.type) {
+
+        case 'room_list':
+          renderRoomList(msg.rooms);
+          break;
+
+        case 'leaderboard':
+          cachedLb = msg.entries;
+          if (currentScreen === 'screen-leaderboard') renderLeaderboard(msg.entries);
+          break;
+
+        case 'joined':
+          myId = msg.id;
+          myColor = msg.color;
+          myRoomId = msg.roomId;
+          document.getElementById('waitingRoomName').textContent = msg.roomName;
+          document.getElementById('waitingRoomId').textContent = `Room ID: ${msg.roomId}`;
+          updateWaitingRoom(msg.players);
+          goTo('screen-waiting');
+          break;
+
+        case 'waiting':
+          document.getElementById('waitingStatus').textContent = 'Waiting for more players...';
+          break;
+
+        case 'player_joined':
+          updateWaitingRoom(msg.players);
+          document.getElementById('waitingStatus').textContent = `${msg.name} joined!`;
+          break;
+
+        case 'player_left':
+          delete remotePlayers[msg.id];
+          if (currentScreen === 'screen-waiting') {
+            const updated = { ...waitingPlayers };
+            delete updated[msg.id];
+            updateWaitingRoom(updated);
+          }
+          addKillFeedEntry(`${msg.name} left`);
+          break;
+
+        case 'countdown':
+          updateWaitingRoom(msg.players);
+          document.getElementById('waitingStatus').textContent = 'Game starting in 3...';
+          gameState = 'countdown';
+          countdownVal = 3;
+          countdownTimer = 0;
+          remotePlayers = {};
+          Object.entries(msg.players).forEach(([id, p]) => {
+            if (parseInt(id) !== myId) remotePlayers[id] = { ...p, legAngle: 0 };
+          });
+          break;
+
+        case 'start':
+          rngSeed = msg.seed;
+          gameState = 'running';
+          startGame();
+          goTo('screen-game');
+          break;
+
+        case 'error':
+          // Show error on whichever screen is active
+          const errScreens = {
+            'screen-create-room': 'createRoomStatus',
+            'screen-join-password': 'joinPasswordStatus',
+            'screen-multiplayer': 'mpStatus',
+            'screen-quick-join': 'quickJoinStatus',
+          };
+          const errEl = errScreens[currentScreen];
+          if (errEl) {
+            const el = document.getElementById(errEl);
+            el.textContent = msg.message;
+            setTimeout(() => el.textContent = '', 3000);
+          }
+          break;
+
+        case 'state':
+          if (remotePlayers[msg.id]) {
+            Object.assign(remotePlayers[msg.id], { x: msg.x, y: msg.y, isSliding: msg.isSliding, onGround: msg.onGround, legAngle: msg.legAngle, score: msg.score });
+          }
+          break;
+
+        case 'player_died':
+          if (remotePlayers[msg.id]) remotePlayers[msg.id].alive = false;
+          addKillFeedEntry(`💀 ${msg.name} died (${msg.score} pts)`);
+          break;
+
+        case 'game_over':
+          gameState = 'gameover';
+          gameOverData = msg;
+          if (msg.leaderboard) { cachedLb = msg.leaderboard; }
+          break;
+      }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    //  CANVAS & GAME ENGINE
+    // ═══════════════════════════════════════════════════════════════
+    const VIRTUAL_W = 800;
+    const VIRTUAL_H = 300;
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+
+    function resizeCanvas() {
+      const scale = Math.min(window.innerWidth / VIRTUAL_W, window.innerHeight / VIRTUAL_H);
+      canvas.width = VIRTUAL_W; canvas.height = VIRTUAL_H;
+      canvas.style.width = Math.floor(VIRTUAL_W * scale) + 'px';
+      canvas.style.height = Math.floor(VIRTUAL_H * scale) + 'px';
+    }
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
+
+    // ── Constants ──────────────────────────────────────────────────
+    const GROUND_Y = 240;
+    const GRAVITY = 0.6;
+    const JUMP_FORCE = -13;
+    const SLIDE_DURATION = 40;
+
+    // ── Game state ─────────────────────────────────────────────────
+    let gameState = 'menu';
+    let scrollSpeed = 4;
+    let groundOffset = 0;
+    let frameCount = 0;
+    let score = 0;
+    let coins = 0;
+    let isSoloMode = false;
+    let soloHardMode = false;
+    let rngSeed = 12345;
+    let countdownTimer = 0;
+    let countdownVal = 3;
+
+    function seededRand() {
+      rngSeed = (rngSeed * 1664525 + 1013904223) & 0xffffffff;
+      return (rngSeed >>> 0) / 0xffffffff;
+    }
+
+    // ── Local player ───────────────────────────────────────────────
+    const me = {
+      x: 120, y: GROUND_Y, vy: 0, onGround: true,
+      jumpsLeft: 2, isSliding: false, slideTimer: 0, legAngle: 0, alive: true,
+      get hitbox() {
+        if (this.isSliding) return { x: this.x - 30, y: this.y - 22, w: 46, h: 22 };
+        return { x: this.x - 10, y: this.y - 62, w: 20, h: 62 };
+      }
     };
-  }
 
-  function send(obj) {
-    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
-  }
+    // ── Obstacles ──────────────────────────────────────────────────
+    let obstacles = [], obstacleTimer = 80;
+    function spawnObstacle() {
+      if (seededRand() < 0.5) {
+        const h = 20 + Math.floor(seededRand() * 3) * 15;
+        obstacles.push({ type: 'block', x: VIRTUAL_W + 20, y: GROUND_Y - h, w: 28, h });
+      } else {
+        obstacles.push({ type: 'bar', x: VIRTUAL_W + 20, y: GROUND_Y - 72, w: 60, h: 14 });
+      }
+    }
+    function updateObstacles() {
+      obstacleTimer--;
+      if (obstacleTimer <= 0) { spawnObstacle(); obstacleTimer = Math.floor(70 + seededRand() * 60); }
+      obstacles.forEach(o => o.x -= scrollSpeed);
+      obstacles = obstacles.filter(o => o.x + o.w > -10);
+    }
+    function drawObstacles() {
+      obstacles.forEach(o => {
+        if (o.type === 'block') { ctx.fillStyle = '#e94560'; ctx.shadowColor = '#e94560'; ctx.shadowBlur = 10; ctx.fillRect(o.x, o.y, o.w, o.h); ctx.strokeStyle = '#ff8099'; ctx.lineWidth = 1; ctx.shadowBlur = 0; ctx.strokeRect(o.x + 2, o.y + 2, o.w - 4, o.h - 4); }
+        else { ctx.fillStyle = '#ff6b35'; ctx.shadowColor = '#ff6b35'; ctx.shadowBlur = 12; ctx.fillRect(o.x, o.y, o.w, o.h); ctx.strokeStyle = '#ff6b35'; ctx.lineWidth = 2;[o.x + 8, o.x + o.w - 8].forEach(cx => { ctx.beginPath(); ctx.moveTo(cx, o.y + o.h); ctx.lineTo(cx, GROUND_Y); ctx.stroke(); }); }
+        ctx.shadowBlur = 0;
+      });
+    }
 
-  function joinGame() {
-    const name = document.getElementById('nameInput').value.trim() || 'Anonymous';
-    document.getElementById('joinBtn').disabled = true;
-    send({ type: 'join', name });
-  }
+    // ── Coins ──────────────────────────────────────────────────────
+    let coinObjects = [], coinTimer = 60, coinBursts = [];
+    function spawnCoin() { coinObjects.push({ x: VIRTUAL_W + 20, y: seededRand() < 0.5 ? GROUND_Y - 80 - seededRand() * 60 : GROUND_Y - 18, r: 8, pulse: 0, grabbed: false }); }
+    function updateCoins() { coinTimer--; if (coinTimer <= 0) { spawnCoin(); coinTimer = Math.floor(50 + seededRand() * 40); } coinObjects = coinObjects.filter(c => c.x + c.r > -10); coinObjects.forEach(c => { c.x -= scrollSpeed; c.pulse += 0.1; }); }
+    function drawCoins() { coinObjects.forEach(c => { if (c.grabbed) return; ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 6 + Math.sin(c.pulse) * 3; ctx.beginPath(); ctx.arc(c.x, c.y, c.r, 0, Math.PI * 2); ctx.fillStyle = '#ffd700'; ctx.fill(); ctx.beginPath(); ctx.arc(c.x - 2, c.y - 2, c.r * 0.45, 0, Math.PI * 2); ctx.fillStyle = 'rgba(255,255,220,0.7)'; ctx.fill(); ctx.shadowBlur = 0; }); }
+    function spawnCoinBurst(x, y) { for (let i = 0; i < 8; i++) { const a = (Math.PI * 2 / 8) * i; coinBursts.push({ x, y, vx: Math.cos(a) * 3, vy: Math.sin(a) * 3, life: 18 }); } }
+    function updateCoinBursts() { coinBursts = coinBursts.filter(p => p.life > 0); coinBursts.forEach(p => { p.x += p.vx; p.y += p.vy; p.life--; }); }
+    function drawCoinBursts() { coinBursts.forEach(p => { ctx.fillStyle = `rgba(255,215,0,${p.life / 18})`; ctx.beginPath(); ctx.arc(p.x, p.y, 2.5, 0, Math.PI * 2); ctx.fill(); }); }
+    function checkCoinCollisions() { const hb = me.hitbox; coinObjects.forEach(c => { if (c.grabbed) return; if (rectsOverlap(hb, { x: c.x - c.r, y: c.y - c.r, w: c.r * 2, h: c.r * 2 })) { c.grabbed = true; coins++; score += 10; addFloater(c.x, c.y - 10, '+10', 'rgb(255,215,0)'); spawnCoinBurst(c.x, c.y); } }); }
 
-  function setStatus(msg) {
-    document.getElementById('status').textContent = msg;
-  }
+    // ── Collision ──────────────────────────────────────────────────
+    function rectsOverlap(a, b) { return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y; }
+    function checkCollisions() { if (!me.alive) return; const hb = me.hitbox; for (const o of obstacles) { if (rectsOverlap(hb, { x: o.x, y: o.y, w: o.w, h: o.h })) { killMe(); return; } } }
 
-  // ─────────────────────────────────────────────────────────────
-  //  SERVER MESSAGE HANDLER
-  // ─────────────────────────────────────────────────────────────
-  // remotePlayers = { id: { x, y, isSliding, onGround, legAngle, alive, score, name, color } }
-  let remotePlayers = {};
-  let countdownVal  = 3;
-  let countdownTimer = 0;
+    // ── Death ──────────────────────────────────────────────────────
+    let deathParticles = [];
+    function killMe() {
+      if (!me.alive) return; me.alive = false;
+      if (isSoloMode) { gameState = 'dead'; }
+      else { gameState = 'dead'; wsSend({ type: 'died', score: Math.floor(score) }); addKillFeedEntry(`💀 You died (${Math.floor(score)} pts)`); }
+      if (isSoloMode) { const best = parseFloat(localStorage.getItem('stickmanBestSolo') || 0); if (score > best) localStorage.setItem('stickmanBestSolo', score); }
+      for (let i = 0; i < 20; i++) { const a = (Math.PI * 2 / 20) * i; deathParticles.push({ x: me.x, y: me.y - 30, vx: Math.cos(a) * (2 + Math.random() * 4), vy: Math.sin(a) * (2 + Math.random() * 4) - 2, life: 50, size: 2 + Math.random() * 3 }); }
+    }
+    function updateDeathParticles() { deathParticles = deathParticles.filter(p => p.life > 0); deathParticles.forEach(p => { p.x += p.vx; p.y += p.vy; p.vy += 0.15; p.life--; }); }
+    function drawDeathParticles() { deathParticles.forEach(p => { ctx.fillStyle = `rgba(233,69,96,${p.life / 50})`; ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2); ctx.fill(); }); }
 
-  function handleServerMessage(msg) {
-    switch (msg.type) {
+    // ── Floaters ───────────────────────────────────────────────────
+    let floaters = [];
+    function addFloater(x, y, text, color) { floaters.push({ x, y, text, color, life: 45, vy: -1.2 }); }
+    function updateFloaters() { floaters = floaters.filter(f => f.life > 0); floaters.forEach(f => { f.y += f.vy; f.life--; }); }
+    function drawFloaters() { floaters.forEach(f => { const a = f.life / 45; ctx.fillStyle = f.color.replace('rgb', 'rgba').replace(')', `, ${a})`); ctx.font = 'bold 13px Courier New'; ctx.textAlign = 'center'; ctx.fillText(f.text, f.x, f.y); }); ctx.textAlign = 'left'; }
 
-      case 'joined':
-        myId    = msg.id;
-        myColor = msg.color;
-        // Load other players already in the room
-        remotePlayers = {};
-        Object.entries(msg.players).forEach(([id, p]) => {
-          if (parseInt(id) !== myId) remotePlayers[id] = p;
-        });
-        setStatus(`Joined room! Waiting for more players...`);
-        break;
+    // ── Particles ──────────────────────────────────────────────────
+    let particles = [];
+    function spawnDust(x, y) { if (!settings.particles) return; for (let i = 0; i < 6; i++)particles.push({ x, y, vx: (Math.random() - 0.5) * 4, vy: Math.random() * -2 - 1, life: 20 }); }
+    function updateParticles() { particles = particles.filter(p => p.life > 0); particles.forEach(p => { p.x += p.vx; p.y += p.vy; p.vy += 0.1; p.life--; }); }
+    function drawParticles() { particles.forEach(p => { ctx.fillStyle = `rgba(0,212,255,${p.life / 20})`; ctx.beginPath(); ctx.arc(p.x, p.y, 2, 0, Math.PI * 2); ctx.fill(); }); }
 
-      case 'waiting':
-        setStatus('Waiting for another player to join...');
-        break;
+    // ── Kill feed ──────────────────────────────────────────────────
+    let killFeed = [];
+    function addKillFeedEntry(text) { killFeed.push({ text, life: 180 }); if (killFeed.length > 5) killFeed.shift(); }
+    function updateKillFeed() { killFeed = killFeed.filter(e => e.life > 0); killFeed.forEach(e => e.life--); }
+    function drawKillFeed() { killFeed.forEach((e, i) => { const a = Math.min(1, e.life / 40); ctx.fillStyle = `rgba(200,200,200,${a})`; ctx.font = '10px Courier New'; ctx.textAlign = 'right'; ctx.fillText(e.text, VIRTUAL_W - 10, 50 + i * 14); }); ctx.textAlign = 'left'; }
 
-      case 'player_joined':
-        remotePlayers = {};
-        Object.entries(msg.players).forEach(([id, p]) => {
-          if (parseInt(id) !== myId) remotePlayers[id] = p;
-        });
-        setStatus(`${msg.name} joined! Starting soon...`);
-        break;
+    // ── Stars ──────────────────────────────────────────────────────
+    const STAR_LAYERS = [{ count: 60, speed: 0.2, size: 1, alpha: 0.5 }, { count: 35, speed: 0.5, size: 1.5, alpha: 0.7 }, { count: 15, speed: 0.9, size: 2, alpha: 1.0 }];
+    const stars = [];
+    function initStars() { STAR_LAYERS.forEach((layer, li) => { for (let i = 0; i < layer.count; i++)stars.push({ x: Math.random() * VIRTUAL_W, y: Math.random() * (GROUND_Y - 20), layer: li, twinkle: Math.random() * Math.PI * 2 }); }); }
+    function updateStars() { stars.forEach(s => { s.x -= STAR_LAYERS[s.layer].speed * (scrollSpeed / 4); s.twinkle += 0.05; if (s.x < 0) s.x = VIRTUAL_W; }); }
+    function drawStars() { if (!settings.stars) return; stars.forEach(s => { const l = STAR_LAYERS[s.layer]; const a = l.alpha * (0.6 + 0.4 * Math.sin(s.twinkle)); ctx.fillStyle = `rgba(200,220,255,${a})`; ctx.beginPath(); ctx.arc(s.x, s.y, l.size, 0, Math.PI * 2); ctx.fill(); }); }
 
-      case 'countdown':
-        gameState    = 'countdown';
-        countdownVal = 3;
-        countdownTimer = 0;
-        remotePlayers = {};
-        Object.entries(msg.players).forEach(([id, p]) => {
-          if (parseInt(id) !== myId) remotePlayers[id] = { ...p, legAngle: 0 };
-        });
-        document.getElementById('lobby').style.display = 'none';
-        break;
+    // ── Background ─────────────────────────────────────────────────
+    function drawBackground() {
+      ctx.fillStyle = '#16213e'; ctx.fillRect(0, 0, VIRTUAL_W, VIRTUAL_H);
+      drawStars();
+      const bs = groundOffset * 0.2;
+      [{ x: 50, w: 40, h: 80 }, { x: 120, w: 25, h: 50 }, { x: 200, w: 60, h: 100 }, { x: 290, w: 30, h: 70 }, { x: 370, w: 50, h: 90 }, { x: 450, w: 35, h: 60 }, { x: 530, w: 55, h: 110 }, { x: 620, w: 40, h: 75 }, { x: 700, w: 30, h: 55 }, { x: 760, w: 45, h: 85 }].forEach(b => {
+        const bx = ((b.x - bs % VIRTUAL_W) + VIRTUAL_W) % VIRTUAL_W;
+        ctx.fillStyle = '#0f3460'; ctx.fillRect(bx, GROUND_Y - b.h, b.w, b.h);
+      });
+    }
+    function drawGround() {
+      ctx.strokeStyle = '#e94560'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(0, GROUND_Y); ctx.lineTo(VIRTUAL_W, GROUND_Y); ctx.stroke();
+      ctx.strokeStyle = '#e9456066'; ctx.lineWidth = 1;
+      for (let x = -groundOffset % 40; x < VIRTUAL_W; x += 40) { ctx.beginPath(); ctx.moveTo(x, GROUND_Y); ctx.lineTo(x, GROUND_Y + 8); ctx.stroke(); }
+    }
 
-      case 'start':
-        // Use shared seed so obstacles spawn identically for all players
-        rngSeed   = msg.seed;
-        gameState = 'running';
-        startGame();
-        break;
-
-      case 'state':
-        if (remotePlayers[msg.id]) {
-          Object.assign(remotePlayers[msg.id], {
-            x: msg.x, y: msg.y,
-            isSliding: msg.isSliding,
-            onGround:  msg.onGround,
-            legAngle:  msg.legAngle,
-            score:     msg.score,
+    // ── Stickman draw ──────────────────────────────────────────────
+    function drawStickmanAt(x, y, isSliding, onGround, legAngle, color, alive, name, isMe) {
+      if (!alive) return;
+      ctx.strokeStyle = color; ctx.lineWidth = isMe ? 2.5 : 2; ctx.lineCap = 'round'; ctx.globalAlpha = isMe ? 1 : 0.75;
+      if (isSliding) {
+        const hY = y - 18, hX = x + 10;
+        ctx.beginPath(); ctx.arc(hX, hY, 10, 0, Math.PI * 2); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(hX - 10, hY); ctx.lineTo(x - 25, hY); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(x - 10, hY); ctx.lineTo(x - 5, y - 2); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(x - 20, hY); ctx.lineTo(x - 30, y - 2); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(hX - 10, hY + 2); ctx.lineTo(hX + 16, hY - 6); ctx.stroke();
+      } else {
+        const hr = 12, hY = y - 60, bT = hY + hr, bB = y - 20, inAir = !onGround, la = legAngle;
+        ctx.beginPath(); ctx.arc(x, hY, hr, 0, Math.PI * 2); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(x, bT); ctx.lineTo(x, bB); ctx.stroke();
+        const aw = inAir ? 0 : Math.sin(la) * 0.5;
+        ctx.beginPath(); ctx.moveTo(x, bT + 10); ctx.lineTo(x - 18, bT + 10 + aw * 20); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(x, bT + 10); ctx.lineTo(x + 18, bT + 10 - aw * 20); ctx.stroke();
+        if (inAir) {
+          ctx.beginPath(); ctx.moveTo(x, bB); ctx.lineTo(x - 12, bB + 14); ctx.lineTo(x - 6, bB + 24); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(x, bB); ctx.lineTo(x + 12, bB + 14); ctx.lineTo(x + 4, bB + 24); ctx.stroke();
+        } else {
+          [Math.sin(la) * 0.6, Math.sin(la + Math.PI) * 0.6].forEach(angle => {
+            const kx = x + Math.sin(angle) * 22, ky = bB + Math.cos(angle) * 22, fx = kx + Math.sin(angle * 0.5) * 22, fy = ky + Math.cos(angle * 0.5) * 22;
+            ctx.beginPath(); ctx.moveTo(x, bB); ctx.lineTo(kx, ky); ctx.lineTo(fx, fy); ctx.stroke();
           });
         }
-        break;
-
-      case 'player_died':
-        if (remotePlayers[msg.id]) {
-          remotePlayers[msg.id].alive = false;
-          addKillFeedEntry(`💀 ${msg.name} died (${msg.score} pts)`);
-        }
-        break;
-
-      case 'player_left':
-        delete remotePlayers[msg.id];
-        addKillFeedEntry(`${msg.name} left`);
-        break;
-
-      case 'game_over':
-        gameState = 'gameover';
-        gameOverData = msg;
-        break;
-    }
-  }
-
-  // ─────────────────────────────────────────────────────────────
-  //  KILL FEED  (event log on right side)
-  // ─────────────────────────────────────────────────────────────
-  let killFeed = [];
-  function addKillFeedEntry(text) {
-    killFeed.push({ text, life: 180 });
-    if (killFeed.length > 5) killFeed.shift();
-  }
-  function updateKillFeed() {
-    killFeed = killFeed.filter(e => e.life > 0);
-    killFeed.forEach(e => e.life--);
-  }
-  function drawKillFeed() {
-    killFeed.forEach((e, i) => {
-      const alpha = Math.min(1, e.life / 40);
-      ctx.fillStyle = `rgba(200,200,200,${alpha})`;
-      ctx.font      = '10px Courier New';
-      ctx.textAlign = 'right';
-      ctx.fillText(e.text, VIRTUAL_W - 10, 50 + i * 14);
-    });
-    ctx.textAlign = 'left';
-  }
-
-  // ─────────────────────────────────────────────────────────────
-  //  SEEDED RNG
-  //  All clients use the same seed so obstacles are identical.
-  //  This means we only need to sync player positions, not
-  //  every obstacle — much less network traffic!
-  // ─────────────────────────────────────────────────────────────
-  let rngSeed = 12345;
-  function seededRand() {
-    rngSeed = (rngSeed * 1664525 + 1013904223) & 0xffffffff;
-    return (rngSeed >>> 0) / 0xffffffff;
-  }
-
-  // ─────────────────────────────────────────────────────────────
-  //  GAME STATE
-  // ─────────────────────────────────────────────────────────────
-  let scrollSpeed  = 4;
-  let groundOffset = 0;
-  let frameCount   = 0;
-  let score        = 0;
-  let coins        = 0;
-  let gameOverData = null;
-
-  // ─────────────────────────────────────────────────────────────
-  //  LOCAL PLAYER (me)
-  // ─────────────────────────────────────────────────────────────
-  const me = {
-    x: 120, y: GROUND_Y,
-    vy: 0, onGround: true,
-    jumpsLeft: 2,
-    isSliding: false, slideTimer: 0,
-    legAngle: 0, alive: true,
-
-    get hitbox() {
-      if (this.isSliding) return { x: this.x - 30, y: this.y - 22, w: 46, h: 22 };
-      return { x: this.x - 10, y: this.y - 62, w: 20, h: 62 };
-    }
-  };
-
-  // ─────────────────────────────────────────────────────────────
-  //  OBSTACLES  (seeded — same on all clients)
-  // ─────────────────────────────────────────────────────────────
-  let obstacles     = [];
-  let obstacleTimer = 80;
-
-  function spawnObstacle() {
-    const type = seededRand() < 0.5 ? 'block' : 'bar';
-    if (type === 'block') {
-      const h = 20 + Math.floor(seededRand() * 3) * 15;
-      obstacles.push({ type: 'block', x: VIRTUAL_W + 20, y: GROUND_Y - h, w: 28, h });
-    } else {
-      obstacles.push({ type: 'bar', x: VIRTUAL_W + 20, y: GROUND_Y - 72, w: 60, h: 14 });
-    }
-  }
-
-  function updateObstacles() {
-    obstacleTimer--;
-    if (obstacleTimer <= 0) {
-      spawnObstacle();
-      obstacleTimer = Math.floor(70 + seededRand() * 60);
-    }
-    obstacles.forEach(o => o.x -= scrollSpeed);
-    obstacles = obstacles.filter(o => o.x + o.w > -10);
-  }
-
-  function drawObstacles() {
-    obstacles.forEach(o => {
-      if (o.type === 'block') {
-        ctx.fillStyle = '#e94560'; ctx.shadowColor = '#e94560'; ctx.shadowBlur = 10;
-        ctx.fillRect(o.x, o.y, o.w, o.h);
-        ctx.strokeStyle = '#ff8099'; ctx.lineWidth = 1; ctx.shadowBlur = 0;
-        ctx.strokeRect(o.x + 2, o.y + 2, o.w - 4, o.h - 4);
-      } else {
-        ctx.fillStyle = '#ff6b35'; ctx.shadowColor = '#ff6b35'; ctx.shadowBlur = 12;
-        ctx.fillRect(o.x, o.y, o.w, o.h);
-        ctx.strokeStyle = '#ff6b35'; ctx.lineWidth = 2;
-        [o.x + 8, o.x + o.w - 8].forEach(cx => {
-          ctx.beginPath(); ctx.moveTo(cx, o.y + o.h); ctx.lineTo(cx, GROUND_Y); ctx.stroke();
-        });
+        if (!onGround) { for (let i = 0; i < (isMe ? me.jumpsLeft : 1); i++) { ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x - 6 + i * 12, y - 75, 3, 0, Math.PI * 2); ctx.fill(); } }
       }
-      ctx.shadowBlur = 0;
-    });
-  }
+      ctx.fillStyle = color; ctx.font = `bold ${isMe ? 10 : 9}px Courier New`; ctx.textAlign = 'center';
+      ctx.fillText(isMe ? `${name} ★` : name, x, y - 68);
+      ctx.textAlign = 'left'; ctx.globalAlpha = 1;
+    }
 
-  // ─────────────────────────────────────────────────────────────
-  //  COINS
-  // ─────────────────────────────────────────────────────────────
-  let coinObjects = [];
-  let coinTimer   = 60;
-
-  function spawnCoin() {
-    const airCoin = seededRand() < 0.5;
-    coinObjects.push({
-      x: VIRTUAL_W + 20,
-      y: airCoin ? GROUND_Y - 80 - seededRand() * 60 : GROUND_Y - 18,
-      r: 8, pulse: 0, grabbed: false,
-    });
-  }
-  function updateCoins() {
-    coinTimer--;
-    if (coinTimer <= 0) { spawnCoin(); coinTimer = Math.floor(50 + seededRand() * 40); }
-    coinObjects = coinObjects.filter(c => c.x + c.r > -10);
-    coinObjects.forEach(c => { c.x -= scrollSpeed; c.pulse += 0.1; });
-  }
-  function drawCoins() {
-    coinObjects.forEach(c => {
-      if (c.grabbed) return;
-      ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 6 + Math.sin(c.pulse) * 3;
-      ctx.beginPath(); ctx.arc(c.x, c.y, c.r, 0, Math.PI * 2);
-      ctx.fillStyle = '#ffd700'; ctx.fill();
-      ctx.beginPath(); ctx.arc(c.x - 2, c.y - 2, c.r * 0.45, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(255,255,220,0.7)'; ctx.fill();
-      ctx.shadowBlur = 0;
-    });
-  }
-  function checkCoinCollisions() {
-    const hb = me.hitbox;
-    coinObjects.forEach(c => {
-      if (c.grabbed) return;
-      if (rectsOverlap(hb, { x: c.x - c.r, y: c.y - c.r, w: c.r * 2, h: c.r * 2 })) {
-        c.grabbed = true; coins++; score += 10;
-        addFloater(c.x, c.y - 10, '+10', 'rgb(255,215,0)');
-        spawnCoinBurst(c.x, c.y);
+    // ── HUD ────────────────────────────────────────────────────────
+    function drawHUD() {
+      ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.fillRect(8, 8, 200, 56);
+      ctx.strokeStyle = myColor + '44'; ctx.lineWidth = 1; ctx.strokeRect(8, 8, 200, 56);
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 12px Courier New'; ctx.fillText('SCORE', 18, 26);
+      ctx.fillStyle = myColor; ctx.font = 'bold 20px Courier New'; ctx.fillText(Math.floor(score), 18, 50);
+      ctx.fillStyle = '#ffd700'; ctx.font = '12px Courier New'; ctx.fillText(`🪙 x${coins}`, 100, 26);
+      if (!isSoloMode) {
+        const aliveCount = Object.values(remotePlayers).filter(p => p.alive).length + (me.alive ? 1 : 0);
+        const total = Object.values(remotePlayers).length + 1;
+        ctx.fillStyle = '#888'; ctx.font = '10px Courier New'; ctx.fillText(`${aliveCount}/${total} alive`, 100, 50);
       }
-    });
-  }
+      const spd = Math.floor((scrollSpeed - 4) / 0.5) + 1;
+      ctx.fillStyle = '#e94560'; ctx.font = 'bold 10px Courier New'; ctx.textAlign = 'right';
+      ctx.fillText(`SPD x${spd}`, VIRTUAL_W - 10, 22); ctx.textAlign = 'left';
 
-  let coinBursts = [];
-  function spawnCoinBurst(x, y) {
-    for (let i = 0; i < 8; i++) {
-      const a = (Math.PI * 2 / 8) * i;
-      coinBursts.push({ x, y, vx: Math.cos(a) * 3, vy: Math.sin(a) * 3, life: 18 });
-    }
-  }
-  function updateCoinBursts() {
-    coinBursts = coinBursts.filter(p => p.life > 0);
-    coinBursts.forEach(p => { p.x += p.vx; p.y += p.vy; p.life--; });
-  }
-  function drawCoinBursts() {
-    coinBursts.forEach(p => {
-      ctx.fillStyle = `rgba(255,215,0,${p.life / 18})`;
-      ctx.beginPath(); ctx.arc(p.x, p.y, 2.5, 0, Math.PI * 2); ctx.fill();
-    });
-  }
-
-  // ─────────────────────────────────────────────────────────────
-  //  COLLISION
-  // ─────────────────────────────────────────────────────────────
-  function rectsOverlap(a, b) {
-    return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
-  }
-  function checkCollisions() {
-    if (!me.alive) return;
-    const hb = me.hitbox;
-    for (const o of obstacles) {
-      if (rectsOverlap(hb, { x: o.x, y: o.y, w: o.w, h: o.h })) {
-        killMe(); return;
-      }
-    }
-  }
-
-  // ─────────────────────────────────────────────────────────────
-  //  DEATH
-  // ─────────────────────────────────────────────────────────────
-  let deathParticles = [];
-
-  function killMe() {
-    if (!me.alive) return;
-    me.alive  = false;
-    gameState = 'dead';
-    send({ type: 'died', score: Math.floor(score) });
-    addKillFeedEntry(`💀 You died (${Math.floor(score)} pts)`);
-    for (let i = 0; i < 20; i++) {
-      const a = (Math.PI * 2 / 20) * i;
-      deathParticles.push({
-        x: me.x, y: me.y - 30,
-        vx: Math.cos(a) * (2 + Math.random() * 4),
-        vy: Math.sin(a) * (2 + Math.random() * 4) - 2,
-        life: 50, size: 2 + Math.random() * 3,
-      });
-    }
-  }
-  function updateDeathParticles() {
-    deathParticles = deathParticles.filter(p => p.life > 0);
-    deathParticles.forEach(p => { p.x += p.vx; p.y += p.vy; p.vy += 0.15; p.life--; });
-  }
-  function drawDeathParticles() {
-    deathParticles.forEach(p => {
-      ctx.fillStyle = `rgba(233,69,96,${p.life / 50})`;
-      ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2); ctx.fill();
-    });
-  }
-
-  // ─────────────────────────────────────────────────────────────
-  //  FLOATERS
-  // ─────────────────────────────────────────────────────────────
-  let floaters = [];
-  function addFloater(x, y, text, color) {
-    floaters.push({ x, y, text, color, life: 45, vy: -1.2 });
-  }
-  function updateFloaters() {
-    floaters = floaters.filter(f => f.life > 0);
-    floaters.forEach(f => { f.y += f.vy; f.life--; });
-  }
-  function drawFloaters() {
-    floaters.forEach(f => {
-      const a = f.life / 45;
-      ctx.fillStyle = f.color.replace('rgb', 'rgba').replace(')', `, ${a})`);
-      ctx.font = 'bold 13px Courier New'; ctx.textAlign = 'center';
-      ctx.fillText(f.text, f.x, f.y);
-    });
-    ctx.textAlign = 'left';
-  }
-
-  // ─────────────────────────────────────────────────────────────
-  //  PARTICLES (jump dust)
-  // ─────────────────────────────────────────────────────────────
-  let particles = [];
-  function spawnDust(x, y) {
-    for (let i = 0; i < 6; i++)
-      particles.push({ x, y, vx: (Math.random() - 0.5) * 4, vy: Math.random() * -2 - 1, life: 20 });
-  }
-  function updateParticles() {
-    particles = particles.filter(p => p.life > 0);
-    particles.forEach(p => { p.x += p.vx; p.y += p.vy; p.vy += 0.1; p.life--; });
-  }
-  function drawParticles() {
-    particles.forEach(p => {
-      ctx.fillStyle = `rgba(0,212,255,${p.life / 20})`;
-      ctx.beginPath(); ctx.arc(p.x, p.y, 2, 0, Math.PI * 2); ctx.fill();
-    });
-  }
-
-  // ─────────────────────────────────────────────────────────────
-  //  STICKMAN DRAW  (used for both local and remote players)
-  // ─────────────────────────────────────────────────────────────
-  function drawStickmanAt(x, y, isSliding, onGround, legAngle, color, alive, name, isMe) {
-    if (!alive) return;
-
-    ctx.strokeStyle = color;
-    ctx.lineWidth   = isMe ? 2.5 : 2;
-    ctx.lineCap     = 'round';
-    ctx.globalAlpha = isMe ? 1.0 : 0.75;
-
-    if (isSliding) {
-      const headY = y - 18, headX = x + 10;
-      ctx.beginPath(); ctx.arc(headX, headY, 10, 0, Math.PI * 2); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(headX - 10, headY); ctx.lineTo(x - 25, headY); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(x - 10, headY); ctx.lineTo(x - 5, y - 2); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(x - 20, headY); ctx.lineTo(x - 30, y - 2); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(headX - 10, headY + 2); ctx.lineTo(headX + 16, headY - 6); ctx.stroke();
-    } else {
-      const hr = 12, headY = y - 60, bodyTop = headY + hr, bodyBottom = y - 20;
-      const inAir = !onGround, la = legAngle;
-
-      ctx.beginPath(); ctx.arc(x, headY, hr, 0, Math.PI * 2); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(x, bodyTop); ctx.lineTo(x, bodyBottom); ctx.stroke();
-
-      const aw = inAir ? 0 : Math.sin(la) * 0.5;
-      ctx.beginPath(); ctx.moveTo(x, bodyTop + 10); ctx.lineTo(x - 18, bodyTop + 10 + aw * 20); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(x, bodyTop + 10); ctx.lineTo(x + 18, bodyTop + 10 - aw * 20); ctx.stroke();
-
-      if (inAir) {
-        ctx.beginPath(); ctx.moveTo(x, bodyBottom); ctx.lineTo(x - 12, bodyBottom + 14); ctx.lineTo(x - 6, bodyBottom + 24); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(x, bodyBottom); ctx.lineTo(x + 12, bodyBottom + 14); ctx.lineTo(x + 4, bodyBottom + 24); ctx.stroke();
-      } else {
-        [Math.sin(la) * 0.6, Math.sin(la + Math.PI) * 0.6].forEach(angle => {
-          const kx = x + Math.sin(angle) * 22, ky = bodyBottom + Math.cos(angle) * 22;
-          const fx = kx + Math.sin(angle * 0.5) * 22, fy = ky + Math.cos(angle * 0.5) * 22;
-          ctx.beginPath(); ctx.moveTo(x, bodyBottom); ctx.lineTo(kx, ky); ctx.lineTo(fx, fy); ctx.stroke();
-        });
+      if (gameState === 'dead' && !isSoloMode) {
+        ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.fillRect(0, VIRTUAL_H - 28, VIRTUAL_W, 28);
+        ctx.fillStyle = '#aaa'; ctx.font = '11px Courier New'; ctx.textAlign = 'center';
+        ctx.fillText('You died — spectating...', VIRTUAL_W / 2, VIRTUAL_H - 10); ctx.textAlign = 'left';
       }
     }
 
-    // Name tag above stickman
-    ctx.globalAlpha = isMe ? 1 : 0.7;
-    ctx.fillStyle   = color;
-    ctx.font        = `bold ${isMe ? 10 : 9}px Courier New`;
-    ctx.textAlign   = 'center';
-    ctx.fillText(isMe ? `${name} ★` : name, x, y - 68);
-    ctx.textAlign   = 'left';
-    ctx.globalAlpha = 1;
-  }
-
-  // ─────────────────────────────────────────────────────────────
-  //  HUD
-  // ─────────────────────────────────────────────────────────────
-  function drawHUD() {
-    // My score panel
-    ctx.fillStyle = 'rgba(0,0,0,0.4)';
-    ctx.fillRect(8, 8, 200, 56);
-    ctx.strokeStyle = myColor + '44'; ctx.lineWidth = 1;
-    ctx.strokeRect(8, 8, 200, 56);
-
-    ctx.fillStyle = '#fff'; ctx.font = 'bold 12px Courier New';
-    ctx.fillText('SCORE', 18, 26);
-    ctx.fillStyle = myColor; ctx.font = 'bold 20px Courier New';
-    ctx.fillText(Math.floor(score), 18, 50);
-    ctx.fillStyle = '#ffd700'; ctx.font = '12px Courier New';
-    ctx.fillText(`🪙 x${coins}`, 100, 26);
-
-    // Alive count
-    const aliveCount = Object.values(remotePlayers).filter(p => p.alive).length + (me.alive ? 1 : 0);
-    const totalCount = Object.values(remotePlayers).length + 1;
-    ctx.fillStyle = '#888'; ctx.font = '10px Courier New';
-    ctx.fillText(`${aliveCount}/${totalCount} alive`, 100, 50);
-
-    // Speed
-    const spd = Math.floor((scrollSpeed - 4) / 0.5) + 1;
-    ctx.fillStyle = '#e94560'; ctx.font = 'bold 10px Courier New';
-    ctx.textAlign = 'right';
-    ctx.fillText(`SPD x${spd}`, VIRTUAL_W - 10, 22);
-    ctx.textAlign = 'left';
-
-    // Spectating banner if dead
-    if (gameState === 'dead') {
-      ctx.fillStyle = 'rgba(0,0,0,0.4)';
-      ctx.fillRect(0, VIRTUAL_H - 28, VIRTUAL_W, 28);
-      ctx.fillStyle = '#aaa'; ctx.font = '11px Courier New';
-      ctx.textAlign = 'center';
-      ctx.fillText('You died — spectating remaining players...', VIRTUAL_W / 2, VIRTUAL_H - 10);
+    // ── Warning hint ───────────────────────────────────────────────
+    function drawWarning() {
+      if (!settings.hints) return;
+      const next = obstacles.find(o => o.x > VIRTUAL_W - 80); if (!next) return;
+      const p = 1 - ((next.x - (VIRTUAL_W - 80)) / 80);
+      ctx.font = `bold ${14 + p * 6}px Courier New`; ctx.textAlign = 'right';
+      if (next.type === 'block') { ctx.fillStyle = `rgba(233,69,96,${p * 0.9})`; ctx.fillText('JUMP ↑', VIRTUAL_W - 10, GROUND_Y - 10); }
+      else { ctx.fillStyle = `rgba(255,107,53,${p * 0.9})`; ctx.fillText('SLIDE ↓', VIRTUAL_W - 10, next.y - 10); }
       ctx.textAlign = 'left';
     }
-  }
 
-  // ─────────────────────────────────────────────────────────────
-  //  COUNTDOWN SCREEN
-  // ─────────────────────────────────────────────────────────────
-  function drawCountdown() {
-    ctx.fillStyle = 'rgba(0,0,0,0.5)';
-    ctx.fillRect(0, 0, VIRTUAL_W, VIRTUAL_H);
-
-    const num = Math.ceil(3 - countdownTimer / 60);
-    ctx.textAlign   = 'center';
-    ctx.fillStyle   = '#00d4ff';
-    ctx.font        = `bold 80px Courier New`;
-    ctx.shadowColor = '#00d4ff'; ctx.shadowBlur = 30;
-    ctx.fillText(num > 0 ? num : 'GO!', VIRTUAL_W / 2, VIRTUAL_H / 2 + 20);
-    ctx.shadowBlur  = 0;
-
-    // Player list
-    const allPlayers = [
-      { name: 'You', color: myColor },
-      ...Object.values(remotePlayers).map(p => ({ name: p.name, color: p.color }))
-    ];
-    ctx.font = '13px Courier New';
-    allPlayers.forEach((p, i) => {
-      ctx.fillStyle = p.color;
-      ctx.fillText(`${p.name}`, VIRTUAL_W / 2, 40 + i * 18);
-    });
-    ctx.textAlign = 'left';
-  }
-
-  // ─────────────────────────────────────────────────────────────
-  //  GAME OVER SCREEN
-  // ─────────────────────────────────────────────────────────────
-  function drawGameOverScreen() {
-    ctx.fillStyle = 'rgba(0,0,0,0.7)';
-    ctx.fillRect(0, 0, VIRTUAL_W, VIRTUAL_H);
-
-    ctx.textAlign = 'center';
-    const isWinner = gameOverData && gameOverData.winnerId === myId;
-
-    ctx.font = `bold 42px Courier New`;
-    ctx.shadowBlur = 20;
-    if (isWinner) {
-      ctx.fillStyle = '#ffd700'; ctx.shadowColor = '#ffd700';
-      ctx.fillText('YOU WIN! 🏆', VIRTUAL_W / 2, 75);
-    } else {
-      ctx.fillStyle = '#e94560'; ctx.shadowColor = '#e94560';
-      const winnerName = gameOverData?.winnerName || '???';
-      ctx.fillText(`${winnerName} wins!`, VIRTUAL_W / 2, 75);
-    }
-    ctx.shadowBlur = 0;
-
-    // Scoreboard
-    if (gameOverData?.scores) {
-      ctx.font = 'bold 12px Courier New';
-      ctx.fillStyle = '#888';
-      ctx.fillText('— FINAL SCORES —', VIRTUAL_W / 2, 105);
-
-      gameOverData.scores.forEach((p, i) => {
-        const medal  = ['🥇','🥈','🥉'][i] || '  ';
-        const isMyRow = p.id === myId;
-        ctx.fillStyle = isMyRow ? p.color : '#aaa';
-        ctx.font      = isMyRow ? 'bold 14px Courier New' : '13px Courier New';
-        ctx.fillText(`${medal} ${p.name}  —  ${p.score} pts`, VIRTUAL_W / 2, 128 + i * 22);
-      });
+    // ── Countdown ──────────────────────────────────────────────────
+    function drawCountdown() {
+      ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(0, 0, VIRTUAL_W, VIRTUAL_H);
+      const num = Math.ceil(3 - countdownTimer / 60);
+      ctx.textAlign = 'center'; ctx.fillStyle = '#00d4ff'; ctx.font = 'bold 80px Courier New';
+      ctx.shadowColor = '#00d4ff'; ctx.shadowBlur = 30; ctx.fillText(num > 0 ? num : 'GO!', VIRTUAL_W / 2, VIRTUAL_H / 2 + 20); ctx.shadowBlur = 0;
+      const all = [{ name: 'You', color: myColor }, ...Object.values(remotePlayers).map(p => ({ name: p.name, color: p.color }))];
+      ctx.font = '13px Courier New'; all.forEach((p, i) => { ctx.fillStyle = p.color; ctx.fillText(p.name, VIRTUAL_W / 2, 40 + i * 18); });
+      ctx.textAlign = 'left';
     }
 
-    ctx.fillStyle = '#666'; ctx.font = '12px Courier New';
-    ctx.fillText('Refresh to play again', VIRTUAL_W / 2, 250);
-    ctx.textAlign = 'left';
-  }
-
-  // ─────────────────────────────────────────────────────────────
-  //  BACKGROUND & GROUND
-  // ─────────────────────────────────────────────────────────────
-  const STAR_LAYERS = [
-    { count: 60, speed: 0.2, size: 1,   alpha: 0.5 },
-    { count: 35, speed: 0.5, size: 1.5, alpha: 0.7 },
-    { count: 15, speed: 0.9, size: 2,   alpha: 1.0 },
-  ];
-  const stars = [];
-  function initStars() {
-    STAR_LAYERS.forEach((layer, li) => {
-      for (let i = 0; i < layer.count; i++)
-        stars.push({ x: Math.random() * VIRTUAL_W, y: Math.random() * (GROUND_Y - 20), layer: li, twinkle: Math.random() * Math.PI * 2 });
-    });
-  }
-  function updateStars() {
-    stars.forEach(s => {
-      s.x -= STAR_LAYERS[s.layer].speed * (scrollSpeed / 4);
-      s.twinkle += 0.05;
-      if (s.x < 0) s.x = VIRTUAL_W;
-    });
-  }
-  function drawStars() {
-    stars.forEach(s => {
-      const layer = STAR_LAYERS[s.layer];
-      const a     = layer.alpha * (0.6 + 0.4 * Math.sin(s.twinkle));
-      ctx.fillStyle = `rgba(200,220,255,${a})`;
-      ctx.beginPath(); ctx.arc(s.x, s.y, layer.size, 0, Math.PI * 2); ctx.fill();
-    });
-  }
-  function drawBackground() {
-    ctx.fillStyle = '#16213e';
-    ctx.fillRect(0, 0, VIRTUAL_W, VIRTUAL_H);
-    drawStars();
-    const bs = groundOffset * 0.2;
-    const buildings = [
-      {x:50,w:40,h:80},{x:120,w:25,h:50},{x:200,w:60,h:100},
-      {x:290,w:30,h:70},{x:370,w:50,h:90},{x:450,w:35,h:60},
-      {x:530,w:55,h:110},{x:620,w:40,h:75},{x:700,w:30,h:55},{x:760,w:45,h:85},
-    ];
-    ctx.fillStyle = '#0f3460';
-    buildings.forEach(b => {
-      const bx = ((b.x - bs % VIRTUAL_W) + VIRTUAL_W) % VIRTUAL_W;
-      ctx.fillRect(bx, GROUND_Y - b.h, b.w, b.h);
-    });
-  }
-  function drawGround() {
-    ctx.strokeStyle = '#e94560'; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(0, GROUND_Y); ctx.lineTo(VIRTUAL_W, GROUND_Y); ctx.stroke();
-    ctx.strokeStyle = '#e9456066'; ctx.lineWidth = 1;
-    for (let x = -groundOffset % 40; x < VIRTUAL_W; x += 40) {
-      ctx.beginPath(); ctx.moveTo(x, GROUND_Y); ctx.lineTo(x, GROUND_Y + 8); ctx.stroke();
-    }
-  }
-
-  // ─────────────────────────────────────────────────────────────
-  //  INPUT
-  // ─────────────────────────────────────────────────────────────
-  function tryJump() {
-    if (gameState !== 'running' || !me.alive) return;
-    if (me.isSliding) return;
-    if (me.jumpsLeft > 0) {
-      me.vy = JUMP_FORCE; me.onGround = false; me.jumpsLeft--;
-      spawnDust(me.x, GROUND_Y);
-    }
-  }
-  function trySlide() {
-    if (gameState !== 'running' || !me.alive) return;
-    if (me.onGround && !me.isSliding) { me.isSliding = true; me.slideTimer = SLIDE_DURATION; }
-  }
-
-  document.addEventListener('keydown', (e) => {
-    if (e.code === 'Space' || e.code === 'ArrowUp')  { e.preventDefault(); tryJump(); }
-    if (e.code === 'ArrowDown')                       { e.preventDefault(); trySlide(); }
-  });
-  let touchStartY = 0;
-  canvas.addEventListener('touchstart', (e) => { e.preventDefault(); touchStartY = e.touches[0].clientY; }, { passive: false });
-  canvas.addEventListener('touchend',   (e) => {
-    e.preventDefault();
-    if (e.changedTouches[0].clientY - touchStartY > 40) trySlide(); else tryJump();
-  }, { passive: false });
-
-  // ─────────────────────────────────────────────────────────────
-  //  ME UPDATE
-  // ─────────────────────────────────────────────────────────────
-  // Send state to server every N frames
-  let sendTimer = 0;
-  const SEND_RATE = 2; // send every 2 frames (~30 updates/sec)
-
-  function updateMe() {
-    if (!me.alive) return;
-    me.vy += GRAVITY; me.y += me.vy;
-    if (me.y >= GROUND_Y) {
-      me.y = GROUND_Y; me.vy = 0; me.onGround = true; me.jumpsLeft = 2;
-    } else { me.onGround = false; }
-    if (me.isSliding) { me.slideTimer--; if (me.slideTimer <= 0) me.isSliding = false; }
-    if (me.onGround && !me.isSliding) me.legAngle += 0.18;
-
-    // Send state to server
-    sendTimer++;
-    if (sendTimer >= SEND_RATE) {
-      sendTimer = 0;
-      send({
-        type: 'state',
-        x: me.x, y: me.y,
-        isSliding: me.isSliding,
-        onGround:  me.onGround,
-        legAngle:  me.legAngle,
-        score:     Math.floor(score),
-      });
-    }
-  }
-
-  // ─────────────────────────────────────────────────────────────
-  //  START GAME (called when server sends 'start')
-  // ─────────────────────────────────────────────────────────────
-  function startGame() {
-    Object.assign(me, { y: GROUND_Y, vy: 0, onGround: true, jumpsLeft: 2,
-      isSliding: false, slideTimer: 0, legAngle: 0, alive: true });
-    score = 0; coins = 0; scrollSpeed = 4; groundOffset = 0; frameCount = 0;
-    obstacles = []; obstacleTimer = 80;
-    coinObjects = []; coinTimer = 60;
-    deathParticles = []; particles = []; floaters = []; coinBursts = [];
-  }
-
-  // ─────────────────────────────────────────────────────────────
-  //  GAME LOOP
-  // ─────────────────────────────────────────────────────────────
-  function gameLoop() {
-    frameCount++;
-
-    // Always scroll background on countdown too
-    if (gameState === 'countdown') {
-      groundOffset += 2;
-      countdownTimer++;
-      updateStars();
+    // ── Solo death screen ──────────────────────────────────────────
+    function drawSoloDead() {
+      ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0, 0, VIRTUAL_W, VIRTUAL_H);
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#e94560'; ctx.font = 'bold 48px Courier New'; ctx.shadowColor = '#e94560'; ctx.shadowBlur = 20;
+      ctx.fillText('YOU DIED', VIRTUAL_W / 2, 100); ctx.shadowBlur = 0;
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 20px Courier New'; ctx.fillText(`Score: ${Math.floor(score)}`, VIRTUAL_W / 2, 140);
+      ctx.fillStyle = '#ffd700'; ctx.font = '15px Courier New'; ctx.fillText(`Coins: ${coins}`, VIRTUAL_W / 2, 165);
+      const best = parseFloat(localStorage.getItem('stickmanBestSolo') || 0);
+      if (score >= best && score > 0) { ctx.fillStyle = '#00d4ff'; ctx.font = 'bold 14px Courier New'; ctx.shadowColor = '#00d4ff'; ctx.shadowBlur = 10; ctx.fillText('✦ NEW BEST! ✦', VIRTUAL_W / 2, 192); ctx.shadowBlur = 0; }
+      else { ctx.fillStyle = '#888'; ctx.font = '13px Courier New'; ctx.fillText(`Best: ${Math.floor(best)}`, VIRTUAL_W / 2, 192); }
+      ctx.fillStyle = `rgba(170,170,170,${0.5 + 0.5 * Math.sin(frameCount * 0.05)})`; ctx.font = '14px Courier New';
+      ctx.fillText('SPACE / TAP to return to menu', VIRTUAL_W / 2, 235); ctx.textAlign = 'left';
     }
 
-    if (gameState === 'running' || gameState === 'dead') {
-      scrollSpeed   = 4 + Math.floor(frameCount / 300) * 0.5;
-      groundOffset += scrollSpeed;
-      updateStars();
-      updateObstacles();
-      updateCoins();
-      updateParticles();
-      updateCoinBursts();
-      updateFloaters();
-      updateKillFeed();
-      updateDeathParticles();
-
-      if (gameState === 'running') {
-        score += 0.1;
-        updateMe();
-        checkCollisions();
-        checkCoinCollisions();
+    // ── Multiplayer game over ──────────────────────────────────────
+    function drawGameOverScreen() {
+      ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(0, 0, VIRTUAL_W, VIRTUAL_H);
+      ctx.textAlign = 'center';
+      const isWinner = gameOverData && gameOverData.winnerId === myId;
+      ctx.font = 'bold 42px Courier New'; ctx.shadowBlur = 20;
+      if (isWinner) { ctx.fillStyle = '#ffd700'; ctx.shadowColor = '#ffd700'; ctx.fillText('YOU WIN! 🏆', VIRTUAL_W / 2, 75); }
+      else { ctx.fillStyle = '#e94560'; ctx.shadowColor = '#e94560'; ctx.fillText(`${gameOverData?.winnerName || '???'} wins!`, VIRTUAL_W / 2, 75); }
+      ctx.shadowBlur = 0;
+      if (gameOverData?.scores) {
+        ctx.font = 'bold 12px Courier New'; ctx.fillStyle = '#888'; ctx.fillText('— FINAL SCORES —', VIRTUAL_W / 2, 105);
+        gameOverData.scores.forEach((p, i) => {
+          const medal = ['🥇', '🥈', '🥉'][i] || ' ';
+          ctx.fillStyle = p.id === myId ? p.color : '#aaa'; ctx.font = p.id === myId ? 'bold 14px Courier New' : '13px Courier New';
+          ctx.fillText(`${medal} ${p.name}  —  ${p.score} pts`, VIRTUAL_W / 2, 128 + i * 22);
+        });
       }
+      ctx.fillStyle = `rgba(150,150,150,${0.5 + 0.5 * Math.sin(frameCount * 0.05)})`; ctx.font = '12px Courier New';
+      ctx.fillText('SPACE / TAP to return to menu', VIRTUAL_W / 2, 252); ctx.textAlign = 'left';
     }
 
-    // ── DRAW ──
-    drawBackground();
-    drawGround();
+    // ── Input ──────────────────────────────────────────────────────
+    let sendTimer = 0;
+    function tryJump() {
+      if ((gameState === 'dead' || gameState === 'gameover') && currentScreen === 'screen-game') {
+        goTo('screen-main'); gameState = 'menu'; return;
+      }
+      if (gameState !== 'running' || !me.alive) return;
+      if (me.isSliding) return;
+      if (me.jumpsLeft > 0) { me.vy = JUMP_FORCE; me.onGround = false; me.jumpsLeft--; spawnDust(me.x, GROUND_Y); }
+    }
+    function trySlide() {
+      if (gameState !== 'running' || !me.alive) return;
+      if (me.onGround && !me.isSliding) { me.isSliding = true; me.slideTimer = SLIDE_DURATION; }
+    }
+    document.addEventListener('keydown', e => {
+      if (e.code === 'Space' || e.code === 'ArrowUp') { e.preventDefault(); tryJump(); }
+      if (e.code === 'ArrowDown') { e.preventDefault(); trySlide(); }
+      if (e.code === 'Enter' && currentScreen === 'screen-multiplayer') refreshRooms();
+    });
+    let tsy = 0;
+    canvas.addEventListener('touchstart', e => { e.preventDefault(); tsy = e.touches[0].clientY; }, { passive: false });
+    canvas.addEventListener('touchend', e => { e.preventDefault(); const d = e.changedTouches[0].clientY - tsy; if (d > 40) trySlide(); else tryJump(); }, { passive: false });
 
-    if (gameState !== 'lobby' && gameState !== 'waiting') {
-      drawObstacles();
-      drawCoins();
-      drawCoinBursts();
-
-      // Draw remote players behind local player
-      Object.values(remotePlayers).forEach(p => {
-        drawStickmanAt(p.x, p.y, p.isSliding, p.onGround, p.legAngle, p.color, p.alive, p.name, false);
-      });
-
-      // Draw local player on top
-      drawStickmanAt(me.x, me.y, me.isSliding, me.onGround, me.legAngle, myColor, me.alive, 'You', true);
-
-      drawParticles();
-      drawDeathParticles();
-      drawFloaters();
-      drawKillFeed();
-      drawHUD();
+    // ── Update me ──────────────────────────────────────────────────
+    function updateMe() {
+      if (!me.alive) return;
+      me.vy += GRAVITY; me.y += me.vy;
+      if (me.y >= GROUND_Y) { me.y = GROUND_Y; me.vy = 0; me.onGround = true; me.jumpsLeft = 2; } else me.onGround = false;
+      if (me.isSliding) { me.slideTimer--; if (me.slideTimer <= 0) me.isSliding = false; }
+      if (me.onGround && !me.isSliding) me.legAngle += 0.18;
+      sendTimer++;
+      if (!isSoloMode && sendTimer >= 2) { sendTimer = 0; wsSend({ type: 'state', x: me.x, y: me.y, isSliding: me.isSliding, onGround: me.onGround, legAngle: me.legAngle, score: Math.floor(score) }); }
     }
 
-    if (gameState === 'countdown') drawCountdown();
-    if (gameState === 'gameover')  drawGameOverScreen();
+    // ── Start game ─────────────────────────────────────────────────
+    function startGame() {
+      Object.assign(me, { y: GROUND_Y, vy: 0, onGround: true, jumpsLeft: 2, isSliding: false, slideTimer: 0, legAngle: 0, alive: true });
+      score = 0; coins = 0; scrollSpeed = soloHardMode ? 6 : 4; groundOffset = 0; frameCount = 0;
+      obstacles = []; obstacleTimer = 80; coinObjects = []; coinTimer = 60;
+      deathParticles = []; particles = []; floaters = []; coinBursts = []; killFeed = [];
+    }
 
-    requestAnimationFrame(gameLoop);
-  }
+    function startSingleplayer(mode) {
+      isSoloMode = true; soloHardMode = mode === 'hard';
+      rngSeed = Math.floor(Math.random() * 99999);
+      gameState = 'running';
+      startGame();
+      goTo('screen-game');
+    }
 
-  // ─────────────────────────────────────────────────────────────
-  //  INIT
-  // ─────────────────────────────────────────────────────────────
-  initStars();
-  connectWS();
-  gameLoop();
+    // ── Main game loop ─────────────────────────────────────────────
+    function gameLoop() {
+      frameCount++;
 
-  // Allow pressing Enter to join
-  document.getElementById('nameInput').addEventListener('keydown', (e) => {
-    if (e.code === 'Enter') joinGame();
-  });
-</script>
+      if (gameState === 'countdown') { groundOffset += 2; countdownTimer++; updateStars(); }
+
+      if (gameState === 'running' || gameState === 'dead') {
+        scrollSpeed = Math.min((soloHardMode ? 6 : 4) + Math.floor(frameCount / 300) * 0.5, 14);
+        groundOffset += scrollSpeed; updateStars();
+        updateObstacles(); updateCoins(); updateParticles(); updateCoinBursts();
+        updateFloaters(); if (!isSoloMode) updateKillFeed(); updateDeathParticles();
+        if (gameState === 'running') { score += 0.1; updateMe(); checkCollisions(); checkCoinCollisions(); }
+      }
+
+      // Only draw if on game screen
+      if (currentScreen !== 'screen-game') { requestAnimationFrame(gameLoop); return; }
+
+      drawBackground(); drawGround();
+
+      if (gameState !== 'menu') {
+        drawObstacles(); drawCoins(); drawCoinBursts();
+        if (!isSoloMode) { Object.values(remotePlayers).forEach(p => drawStickmanAt(p.x, p.y, p.isSliding, p.onGround, p.legAngle, p.color, p.alive, p.name, false)); }
+        drawStickmanAt(me.x, me.y, me.isSliding, me.onGround, me.legAngle, myColor, me.alive, 'You', true);
+        drawParticles(); drawDeathParticles(); drawFloaters();
+        if (!isSoloMode) drawKillFeed();
+        drawHUD();
+        if (gameState === 'running') drawWarning();
+      }
+
+      if (gameState === 'countdown') drawCountdown();
+      if (gameState === 'dead' && isSoloMode) drawSoloDead();
+      if (gameState === 'dead' && !isSoloMode && currentScreen === 'screen-game') { }
+      if (gameState === 'gameover') drawGameOverScreen();
+
+      requestAnimationFrame(gameLoop);
+    }
+
+    // ── Init ────────────────────────────────────────────────────────
+    initStars();
+    connectWS();
+    gameLoop();
+
+    // Refresh room list every 5 seconds when on multiplayer screen
+    setInterval(() => { if (currentScreen === 'screen-multiplayer') refreshRooms(); }, 5000);
+  </script>
 </body>
+
 </html>
