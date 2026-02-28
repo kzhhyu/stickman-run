@@ -1,0 +1,837 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>Stickman Run — Multiplayer</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%; height: 100%;
+      background: #1a1a2e;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      overflow: hidden;
+      font-family: 'Courier New', monospace;
+      color: #eee;
+    }
+    canvas {
+      display: block;
+      max-width: 100vw;
+      max-height: 100vh;
+    }
+
+    /* ── Lobby overlay (shown before game starts) ── */
+    #lobby {
+      position: fixed; inset: 0;
+      background: rgba(10,10,30,0.95);
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 16px; z-index: 10;
+    }
+    #lobby h1 {
+      font-size: 2.2rem; letter-spacing: 4px;
+      color: #e94560;
+      text-shadow: 0 0 20px #e94560;
+    }
+    #lobby p  { color: #888; font-size: 0.85rem; }
+    #lobby input {
+      background: #0f3460; border: 1px solid #e94560;
+      color: #fff; padding: 10px 18px;
+      font-family: 'Courier New', monospace;
+      font-size: 1rem; border-radius: 4px;
+      outline: none; text-align: center; width: 240px;
+    }
+    #lobby input::placeholder { color: #555; }
+    #lobby button {
+      background: #e94560; color: #fff;
+      border: none; padding: 10px 32px;
+      font-family: 'Courier New', monospace;
+      font-size: 1rem; border-radius: 4px;
+      cursor: pointer; letter-spacing: 2px;
+      transition: background 0.2s;
+    }
+    #lobby button:hover { background: #c73652; }
+    #lobby button:disabled { background: #555; cursor: default; }
+    #status { color: #00d4ff; font-size: 0.9rem; min-height: 1.2em; }
+  </style>
+</head>
+<body>
+
+<!-- ── Lobby UI ── -->
+<div id="lobby">
+  <h1>STICKMAN RUN</h1>
+  <p>multiplayer • race to survive longest</p>
+  <input id="nameInput" type="text" maxlength="16" placeholder="Enter your name" />
+  <button id="joinBtn" onclick="joinGame()">JOIN GAME</button>
+  <div id="status">connecting...</div>
+</div>
+
+<canvas id="gameCanvas"></canvas>
+
+<script>
+  // ─────────────────────────────────────────────────────────────
+  //  CANVAS SETUP
+  // ─────────────────────────────────────────────────────────────
+  const VIRTUAL_W = 800;
+  const VIRTUAL_H = 300;
+
+  const canvas = document.getElementById('gameCanvas');
+  const ctx    = canvas.getContext('2d');
+
+  function resizeCanvas() {
+    const scale = Math.min(window.innerWidth / VIRTUAL_W, window.innerHeight / VIRTUAL_H);
+    canvas.width  = VIRTUAL_W;
+    canvas.height = VIRTUAL_H;
+    canvas.style.width  = Math.floor(VIRTUAL_W * scale) + 'px';
+    canvas.style.height = Math.floor(VIRTUAL_H * scale) + 'px';
+  }
+  resizeCanvas();
+  window.addEventListener('resize', resizeCanvas);
+
+  // ─────────────────────────────────────────────────────────────
+  //  CONSTANTS
+  // ─────────────────────────────────────────────────────────────
+  const GROUND_Y       = 240;
+  const GRAVITY        = 0.6;
+  const JUMP_FORCE     = -13;
+  const SLIDE_DURATION = 40;
+
+  // ─────────────────────────────────────────────────────────────
+  //  WEBSOCKET
+  // ─────────────────────────────────────────────────────────────
+  let ws       = null;
+  let myId     = null;
+  let myColor  = '#00d4ff';
+  let gameState = 'lobby';  // lobby | waiting | countdown | running | dead | gameover
+
+  function connectWS() {
+    const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
+    ws = new WebSocket(`${protocol}://${location.host}`);
+
+    ws.onopen  = () => setStatus('Connected! Enter your name and join.');
+    ws.onclose = () => setStatus('Disconnected. Refresh to reconnect.');
+    ws.onerror = () => setStatus('Connection error.');
+
+    ws.onmessage = (event) => {
+      const msg = JSON.parse(event.data);
+      handleServerMessage(msg);
+    };
+  }
+
+  function send(obj) {
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+  }
+
+  function joinGame() {
+    const name = document.getElementById('nameInput').value.trim() || 'Anonymous';
+    document.getElementById('joinBtn').disabled = true;
+    send({ type: 'join', name });
+  }
+
+  function setStatus(msg) {
+    document.getElementById('status').textContent = msg;
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  //  SERVER MESSAGE HANDLER
+  // ─────────────────────────────────────────────────────────────
+  // remotePlayers = { id: { x, y, isSliding, onGround, legAngle, alive, score, name, color } }
+  let remotePlayers = {};
+  let countdownVal  = 3;
+  let countdownTimer = 0;
+
+  function handleServerMessage(msg) {
+    switch (msg.type) {
+
+      case 'joined':
+        myId    = msg.id;
+        myColor = msg.color;
+        // Load other players already in the room
+        remotePlayers = {};
+        Object.entries(msg.players).forEach(([id, p]) => {
+          if (parseInt(id) !== myId) remotePlayers[id] = p;
+        });
+        setStatus(`Joined room! Waiting for more players...`);
+        break;
+
+      case 'waiting':
+        setStatus('Waiting for another player to join...');
+        break;
+
+      case 'player_joined':
+        remotePlayers = {};
+        Object.entries(msg.players).forEach(([id, p]) => {
+          if (parseInt(id) !== myId) remotePlayers[id] = p;
+        });
+        setStatus(`${msg.name} joined! Starting soon...`);
+        break;
+
+      case 'countdown':
+        gameState    = 'countdown';
+        countdownVal = 3;
+        countdownTimer = 0;
+        remotePlayers = {};
+        Object.entries(msg.players).forEach(([id, p]) => {
+          if (parseInt(id) !== myId) remotePlayers[id] = { ...p, legAngle: 0 };
+        });
+        document.getElementById('lobby').style.display = 'none';
+        break;
+
+      case 'start':
+        // Use shared seed so obstacles spawn identically for all players
+        rngSeed   = msg.seed;
+        gameState = 'running';
+        startGame();
+        break;
+
+      case 'state':
+        if (remotePlayers[msg.id]) {
+          Object.assign(remotePlayers[msg.id], {
+            x: msg.x, y: msg.y,
+            isSliding: msg.isSliding,
+            onGround:  msg.onGround,
+            legAngle:  msg.legAngle,
+            score:     msg.score,
+          });
+        }
+        break;
+
+      case 'player_died':
+        if (remotePlayers[msg.id]) {
+          remotePlayers[msg.id].alive = false;
+          addKillFeedEntry(`💀 ${msg.name} died (${msg.score} pts)`);
+        }
+        break;
+
+      case 'player_left':
+        delete remotePlayers[msg.id];
+        addKillFeedEntry(`${msg.name} left`);
+        break;
+
+      case 'game_over':
+        gameState = 'gameover';
+        gameOverData = msg;
+        break;
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  //  KILL FEED  (event log on right side)
+  // ─────────────────────────────────────────────────────────────
+  let killFeed = [];
+  function addKillFeedEntry(text) {
+    killFeed.push({ text, life: 180 });
+    if (killFeed.length > 5) killFeed.shift();
+  }
+  function updateKillFeed() {
+    killFeed = killFeed.filter(e => e.life > 0);
+    killFeed.forEach(e => e.life--);
+  }
+  function drawKillFeed() {
+    killFeed.forEach((e, i) => {
+      const alpha = Math.min(1, e.life / 40);
+      ctx.fillStyle = `rgba(200,200,200,${alpha})`;
+      ctx.font      = '10px Courier New';
+      ctx.textAlign = 'right';
+      ctx.fillText(e.text, VIRTUAL_W - 10, 50 + i * 14);
+    });
+    ctx.textAlign = 'left';
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  //  SEEDED RNG
+  //  All clients use the same seed so obstacles are identical.
+  //  This means we only need to sync player positions, not
+  //  every obstacle — much less network traffic!
+  // ─────────────────────────────────────────────────────────────
+  let rngSeed = 12345;
+  function seededRand() {
+    rngSeed = (rngSeed * 1664525 + 1013904223) & 0xffffffff;
+    return (rngSeed >>> 0) / 0xffffffff;
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  //  GAME STATE
+  // ─────────────────────────────────────────────────────────────
+  let scrollSpeed  = 4;
+  let groundOffset = 0;
+  let frameCount   = 0;
+  let score        = 0;
+  let coins        = 0;
+  let gameOverData = null;
+
+  // ─────────────────────────────────────────────────────────────
+  //  LOCAL PLAYER (me)
+  // ─────────────────────────────────────────────────────────────
+  const me = {
+    x: 120, y: GROUND_Y,
+    vy: 0, onGround: true,
+    jumpsLeft: 2,
+    isSliding: false, slideTimer: 0,
+    legAngle: 0, alive: true,
+
+    get hitbox() {
+      if (this.isSliding) return { x: this.x - 30, y: this.y - 22, w: 46, h: 22 };
+      return { x: this.x - 10, y: this.y - 62, w: 20, h: 62 };
+    }
+  };
+
+  // ─────────────────────────────────────────────────────────────
+  //  OBSTACLES  (seeded — same on all clients)
+  // ─────────────────────────────────────────────────────────────
+  let obstacles     = [];
+  let obstacleTimer = 80;
+
+  function spawnObstacle() {
+    const type = seededRand() < 0.5 ? 'block' : 'bar';
+    if (type === 'block') {
+      const h = 20 + Math.floor(seededRand() * 3) * 15;
+      obstacles.push({ type: 'block', x: VIRTUAL_W + 20, y: GROUND_Y - h, w: 28, h });
+    } else {
+      obstacles.push({ type: 'bar', x: VIRTUAL_W + 20, y: GROUND_Y - 72, w: 60, h: 14 });
+    }
+  }
+
+  function updateObstacles() {
+    obstacleTimer--;
+    if (obstacleTimer <= 0) {
+      spawnObstacle();
+      obstacleTimer = Math.floor(70 + seededRand() * 60);
+    }
+    obstacles.forEach(o => o.x -= scrollSpeed);
+    obstacles = obstacles.filter(o => o.x + o.w > -10);
+  }
+
+  function drawObstacles() {
+    obstacles.forEach(o => {
+      if (o.type === 'block') {
+        ctx.fillStyle = '#e94560'; ctx.shadowColor = '#e94560'; ctx.shadowBlur = 10;
+        ctx.fillRect(o.x, o.y, o.w, o.h);
+        ctx.strokeStyle = '#ff8099'; ctx.lineWidth = 1; ctx.shadowBlur = 0;
+        ctx.strokeRect(o.x + 2, o.y + 2, o.w - 4, o.h - 4);
+      } else {
+        ctx.fillStyle = '#ff6b35'; ctx.shadowColor = '#ff6b35'; ctx.shadowBlur = 12;
+        ctx.fillRect(o.x, o.y, o.w, o.h);
+        ctx.strokeStyle = '#ff6b35'; ctx.lineWidth = 2;
+        [o.x + 8, o.x + o.w - 8].forEach(cx => {
+          ctx.beginPath(); ctx.moveTo(cx, o.y + o.h); ctx.lineTo(cx, GROUND_Y); ctx.stroke();
+        });
+      }
+      ctx.shadowBlur = 0;
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  //  COINS
+  // ─────────────────────────────────────────────────────────────
+  let coinObjects = [];
+  let coinTimer   = 60;
+
+  function spawnCoin() {
+    const airCoin = seededRand() < 0.5;
+    coinObjects.push({
+      x: VIRTUAL_W + 20,
+      y: airCoin ? GROUND_Y - 80 - seededRand() * 60 : GROUND_Y - 18,
+      r: 8, pulse: 0, grabbed: false,
+    });
+  }
+  function updateCoins() {
+    coinTimer--;
+    if (coinTimer <= 0) { spawnCoin(); coinTimer = Math.floor(50 + seededRand() * 40); }
+    coinObjects = coinObjects.filter(c => c.x + c.r > -10);
+    coinObjects.forEach(c => { c.x -= scrollSpeed; c.pulse += 0.1; });
+  }
+  function drawCoins() {
+    coinObjects.forEach(c => {
+      if (c.grabbed) return;
+      ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 6 + Math.sin(c.pulse) * 3;
+      ctx.beginPath(); ctx.arc(c.x, c.y, c.r, 0, Math.PI * 2);
+      ctx.fillStyle = '#ffd700'; ctx.fill();
+      ctx.beginPath(); ctx.arc(c.x - 2, c.y - 2, c.r * 0.45, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255,255,220,0.7)'; ctx.fill();
+      ctx.shadowBlur = 0;
+    });
+  }
+  function checkCoinCollisions() {
+    const hb = me.hitbox;
+    coinObjects.forEach(c => {
+      if (c.grabbed) return;
+      if (rectsOverlap(hb, { x: c.x - c.r, y: c.y - c.r, w: c.r * 2, h: c.r * 2 })) {
+        c.grabbed = true; coins++; score += 10;
+        addFloater(c.x, c.y - 10, '+10', 'rgb(255,215,0)');
+        spawnCoinBurst(c.x, c.y);
+      }
+    });
+  }
+
+  let coinBursts = [];
+  function spawnCoinBurst(x, y) {
+    for (let i = 0; i < 8; i++) {
+      const a = (Math.PI * 2 / 8) * i;
+      coinBursts.push({ x, y, vx: Math.cos(a) * 3, vy: Math.sin(a) * 3, life: 18 });
+    }
+  }
+  function updateCoinBursts() {
+    coinBursts = coinBursts.filter(p => p.life > 0);
+    coinBursts.forEach(p => { p.x += p.vx; p.y += p.vy; p.life--; });
+  }
+  function drawCoinBursts() {
+    coinBursts.forEach(p => {
+      ctx.fillStyle = `rgba(255,215,0,${p.life / 18})`;
+      ctx.beginPath(); ctx.arc(p.x, p.y, 2.5, 0, Math.PI * 2); ctx.fill();
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  //  COLLISION
+  // ─────────────────────────────────────────────────────────────
+  function rectsOverlap(a, b) {
+    return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+  }
+  function checkCollisions() {
+    if (!me.alive) return;
+    const hb = me.hitbox;
+    for (const o of obstacles) {
+      if (rectsOverlap(hb, { x: o.x, y: o.y, w: o.w, h: o.h })) {
+        killMe(); return;
+      }
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  //  DEATH
+  // ─────────────────────────────────────────────────────────────
+  let deathParticles = [];
+
+  function killMe() {
+    if (!me.alive) return;
+    me.alive  = false;
+    gameState = 'dead';
+    send({ type: 'died', score: Math.floor(score) });
+    addKillFeedEntry(`💀 You died (${Math.floor(score)} pts)`);
+    for (let i = 0; i < 20; i++) {
+      const a = (Math.PI * 2 / 20) * i;
+      deathParticles.push({
+        x: me.x, y: me.y - 30,
+        vx: Math.cos(a) * (2 + Math.random() * 4),
+        vy: Math.sin(a) * (2 + Math.random() * 4) - 2,
+        life: 50, size: 2 + Math.random() * 3,
+      });
+    }
+  }
+  function updateDeathParticles() {
+    deathParticles = deathParticles.filter(p => p.life > 0);
+    deathParticles.forEach(p => { p.x += p.vx; p.y += p.vy; p.vy += 0.15; p.life--; });
+  }
+  function drawDeathParticles() {
+    deathParticles.forEach(p => {
+      ctx.fillStyle = `rgba(233,69,96,${p.life / 50})`;
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2); ctx.fill();
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  //  FLOATERS
+  // ─────────────────────────────────────────────────────────────
+  let floaters = [];
+  function addFloater(x, y, text, color) {
+    floaters.push({ x, y, text, color, life: 45, vy: -1.2 });
+  }
+  function updateFloaters() {
+    floaters = floaters.filter(f => f.life > 0);
+    floaters.forEach(f => { f.y += f.vy; f.life--; });
+  }
+  function drawFloaters() {
+    floaters.forEach(f => {
+      const a = f.life / 45;
+      ctx.fillStyle = f.color.replace('rgb', 'rgba').replace(')', `, ${a})`);
+      ctx.font = 'bold 13px Courier New'; ctx.textAlign = 'center';
+      ctx.fillText(f.text, f.x, f.y);
+    });
+    ctx.textAlign = 'left';
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  //  PARTICLES (jump dust)
+  // ─────────────────────────────────────────────────────────────
+  let particles = [];
+  function spawnDust(x, y) {
+    for (let i = 0; i < 6; i++)
+      particles.push({ x, y, vx: (Math.random() - 0.5) * 4, vy: Math.random() * -2 - 1, life: 20 });
+  }
+  function updateParticles() {
+    particles = particles.filter(p => p.life > 0);
+    particles.forEach(p => { p.x += p.vx; p.y += p.vy; p.vy += 0.1; p.life--; });
+  }
+  function drawParticles() {
+    particles.forEach(p => {
+      ctx.fillStyle = `rgba(0,212,255,${p.life / 20})`;
+      ctx.beginPath(); ctx.arc(p.x, p.y, 2, 0, Math.PI * 2); ctx.fill();
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  //  STICKMAN DRAW  (used for both local and remote players)
+  // ─────────────────────────────────────────────────────────────
+  function drawStickmanAt(x, y, isSliding, onGround, legAngle, color, alive, name, isMe) {
+    if (!alive) return;
+
+    ctx.strokeStyle = color;
+    ctx.lineWidth   = isMe ? 2.5 : 2;
+    ctx.lineCap     = 'round';
+    ctx.globalAlpha = isMe ? 1.0 : 0.75;
+
+    if (isSliding) {
+      const headY = y - 18, headX = x + 10;
+      ctx.beginPath(); ctx.arc(headX, headY, 10, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(headX - 10, headY); ctx.lineTo(x - 25, headY); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x - 10, headY); ctx.lineTo(x - 5, y - 2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x - 20, headY); ctx.lineTo(x - 30, y - 2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(headX - 10, headY + 2); ctx.lineTo(headX + 16, headY - 6); ctx.stroke();
+    } else {
+      const hr = 12, headY = y - 60, bodyTop = headY + hr, bodyBottom = y - 20;
+      const inAir = !onGround, la = legAngle;
+
+      ctx.beginPath(); ctx.arc(x, headY, hr, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x, bodyTop); ctx.lineTo(x, bodyBottom); ctx.stroke();
+
+      const aw = inAir ? 0 : Math.sin(la) * 0.5;
+      ctx.beginPath(); ctx.moveTo(x, bodyTop + 10); ctx.lineTo(x - 18, bodyTop + 10 + aw * 20); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x, bodyTop + 10); ctx.lineTo(x + 18, bodyTop + 10 - aw * 20); ctx.stroke();
+
+      if (inAir) {
+        ctx.beginPath(); ctx.moveTo(x, bodyBottom); ctx.lineTo(x - 12, bodyBottom + 14); ctx.lineTo(x - 6, bodyBottom + 24); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(x, bodyBottom); ctx.lineTo(x + 12, bodyBottom + 14); ctx.lineTo(x + 4, bodyBottom + 24); ctx.stroke();
+      } else {
+        [Math.sin(la) * 0.6, Math.sin(la + Math.PI) * 0.6].forEach(angle => {
+          const kx = x + Math.sin(angle) * 22, ky = bodyBottom + Math.cos(angle) * 22;
+          const fx = kx + Math.sin(angle * 0.5) * 22, fy = ky + Math.cos(angle * 0.5) * 22;
+          ctx.beginPath(); ctx.moveTo(x, bodyBottom); ctx.lineTo(kx, ky); ctx.lineTo(fx, fy); ctx.stroke();
+        });
+      }
+    }
+
+    // Name tag above stickman
+    ctx.globalAlpha = isMe ? 1 : 0.7;
+    ctx.fillStyle   = color;
+    ctx.font        = `bold ${isMe ? 10 : 9}px Courier New`;
+    ctx.textAlign   = 'center';
+    ctx.fillText(isMe ? `${name} ★` : name, x, y - 68);
+    ctx.textAlign   = 'left';
+    ctx.globalAlpha = 1;
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  //  HUD
+  // ─────────────────────────────────────────────────────────────
+  function drawHUD() {
+    // My score panel
+    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+    ctx.fillRect(8, 8, 200, 56);
+    ctx.strokeStyle = myColor + '44'; ctx.lineWidth = 1;
+    ctx.strokeRect(8, 8, 200, 56);
+
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 12px Courier New';
+    ctx.fillText('SCORE', 18, 26);
+    ctx.fillStyle = myColor; ctx.font = 'bold 20px Courier New';
+    ctx.fillText(Math.floor(score), 18, 50);
+    ctx.fillStyle = '#ffd700'; ctx.font = '12px Courier New';
+    ctx.fillText(`🪙 x${coins}`, 100, 26);
+
+    // Alive count
+    const aliveCount = Object.values(remotePlayers).filter(p => p.alive).length + (me.alive ? 1 : 0);
+    const totalCount = Object.values(remotePlayers).length + 1;
+    ctx.fillStyle = '#888'; ctx.font = '10px Courier New';
+    ctx.fillText(`${aliveCount}/${totalCount} alive`, 100, 50);
+
+    // Speed
+    const spd = Math.floor((scrollSpeed - 4) / 0.5) + 1;
+    ctx.fillStyle = '#e94560'; ctx.font = 'bold 10px Courier New';
+    ctx.textAlign = 'right';
+    ctx.fillText(`SPD x${spd}`, VIRTUAL_W - 10, 22);
+    ctx.textAlign = 'left';
+
+    // Spectating banner if dead
+    if (gameState === 'dead') {
+      ctx.fillStyle = 'rgba(0,0,0,0.4)';
+      ctx.fillRect(0, VIRTUAL_H - 28, VIRTUAL_W, 28);
+      ctx.fillStyle = '#aaa'; ctx.font = '11px Courier New';
+      ctx.textAlign = 'center';
+      ctx.fillText('You died — spectating remaining players...', VIRTUAL_W / 2, VIRTUAL_H - 10);
+      ctx.textAlign = 'left';
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  //  COUNTDOWN SCREEN
+  // ─────────────────────────────────────────────────────────────
+  function drawCountdown() {
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(0, 0, VIRTUAL_W, VIRTUAL_H);
+
+    const num = Math.ceil(3 - countdownTimer / 60);
+    ctx.textAlign   = 'center';
+    ctx.fillStyle   = '#00d4ff';
+    ctx.font        = `bold 80px Courier New`;
+    ctx.shadowColor = '#00d4ff'; ctx.shadowBlur = 30;
+    ctx.fillText(num > 0 ? num : 'GO!', VIRTUAL_W / 2, VIRTUAL_H / 2 + 20);
+    ctx.shadowBlur  = 0;
+
+    // Player list
+    const allPlayers = [
+      { name: 'You', color: myColor },
+      ...Object.values(remotePlayers).map(p => ({ name: p.name, color: p.color }))
+    ];
+    ctx.font = '13px Courier New';
+    allPlayers.forEach((p, i) => {
+      ctx.fillStyle = p.color;
+      ctx.fillText(`${p.name}`, VIRTUAL_W / 2, 40 + i * 18);
+    });
+    ctx.textAlign = 'left';
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  //  GAME OVER SCREEN
+  // ─────────────────────────────────────────────────────────────
+  function drawGameOverScreen() {
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.fillRect(0, 0, VIRTUAL_W, VIRTUAL_H);
+
+    ctx.textAlign = 'center';
+    const isWinner = gameOverData && gameOverData.winnerId === myId;
+
+    ctx.font = `bold 42px Courier New`;
+    ctx.shadowBlur = 20;
+    if (isWinner) {
+      ctx.fillStyle = '#ffd700'; ctx.shadowColor = '#ffd700';
+      ctx.fillText('YOU WIN! 🏆', VIRTUAL_W / 2, 75);
+    } else {
+      ctx.fillStyle = '#e94560'; ctx.shadowColor = '#e94560';
+      const winnerName = gameOverData?.winnerName || '???';
+      ctx.fillText(`${winnerName} wins!`, VIRTUAL_W / 2, 75);
+    }
+    ctx.shadowBlur = 0;
+
+    // Scoreboard
+    if (gameOverData?.scores) {
+      ctx.font = 'bold 12px Courier New';
+      ctx.fillStyle = '#888';
+      ctx.fillText('— FINAL SCORES —', VIRTUAL_W / 2, 105);
+
+      gameOverData.scores.forEach((p, i) => {
+        const medal  = ['🥇','🥈','🥉'][i] || '  ';
+        const isMyRow = p.id === myId;
+        ctx.fillStyle = isMyRow ? p.color : '#aaa';
+        ctx.font      = isMyRow ? 'bold 14px Courier New' : '13px Courier New';
+        ctx.fillText(`${medal} ${p.name}  —  ${p.score} pts`, VIRTUAL_W / 2, 128 + i * 22);
+      });
+    }
+
+    ctx.fillStyle = '#666'; ctx.font = '12px Courier New';
+    ctx.fillText('Refresh to play again', VIRTUAL_W / 2, 250);
+    ctx.textAlign = 'left';
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  //  BACKGROUND & GROUND
+  // ─────────────────────────────────────────────────────────────
+  const STAR_LAYERS = [
+    { count: 60, speed: 0.2, size: 1,   alpha: 0.5 },
+    { count: 35, speed: 0.5, size: 1.5, alpha: 0.7 },
+    { count: 15, speed: 0.9, size: 2,   alpha: 1.0 },
+  ];
+  const stars = [];
+  function initStars() {
+    STAR_LAYERS.forEach((layer, li) => {
+      for (let i = 0; i < layer.count; i++)
+        stars.push({ x: Math.random() * VIRTUAL_W, y: Math.random() * (GROUND_Y - 20), layer: li, twinkle: Math.random() * Math.PI * 2 });
+    });
+  }
+  function updateStars() {
+    stars.forEach(s => {
+      s.x -= STAR_LAYERS[s.layer].speed * (scrollSpeed / 4);
+      s.twinkle += 0.05;
+      if (s.x < 0) s.x = VIRTUAL_W;
+    });
+  }
+  function drawStars() {
+    stars.forEach(s => {
+      const layer = STAR_LAYERS[s.layer];
+      const a     = layer.alpha * (0.6 + 0.4 * Math.sin(s.twinkle));
+      ctx.fillStyle = `rgba(200,220,255,${a})`;
+      ctx.beginPath(); ctx.arc(s.x, s.y, layer.size, 0, Math.PI * 2); ctx.fill();
+    });
+  }
+  function drawBackground() {
+    ctx.fillStyle = '#16213e';
+    ctx.fillRect(0, 0, VIRTUAL_W, VIRTUAL_H);
+    drawStars();
+    const bs = groundOffset * 0.2;
+    const buildings = [
+      {x:50,w:40,h:80},{x:120,w:25,h:50},{x:200,w:60,h:100},
+      {x:290,w:30,h:70},{x:370,w:50,h:90},{x:450,w:35,h:60},
+      {x:530,w:55,h:110},{x:620,w:40,h:75},{x:700,w:30,h:55},{x:760,w:45,h:85},
+    ];
+    ctx.fillStyle = '#0f3460';
+    buildings.forEach(b => {
+      const bx = ((b.x - bs % VIRTUAL_W) + VIRTUAL_W) % VIRTUAL_W;
+      ctx.fillRect(bx, GROUND_Y - b.h, b.w, b.h);
+    });
+  }
+  function drawGround() {
+    ctx.strokeStyle = '#e94560'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(0, GROUND_Y); ctx.lineTo(VIRTUAL_W, GROUND_Y); ctx.stroke();
+    ctx.strokeStyle = '#e9456066'; ctx.lineWidth = 1;
+    for (let x = -groundOffset % 40; x < VIRTUAL_W; x += 40) {
+      ctx.beginPath(); ctx.moveTo(x, GROUND_Y); ctx.lineTo(x, GROUND_Y + 8); ctx.stroke();
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  //  INPUT
+  // ─────────────────────────────────────────────────────────────
+  function tryJump() {
+    if (gameState !== 'running' || !me.alive) return;
+    if (me.isSliding) return;
+    if (me.jumpsLeft > 0) {
+      me.vy = JUMP_FORCE; me.onGround = false; me.jumpsLeft--;
+      spawnDust(me.x, GROUND_Y);
+    }
+  }
+  function trySlide() {
+    if (gameState !== 'running' || !me.alive) return;
+    if (me.onGround && !me.isSliding) { me.isSliding = true; me.slideTimer = SLIDE_DURATION; }
+  }
+
+  document.addEventListener('keydown', (e) => {
+    if (e.code === 'Space' || e.code === 'ArrowUp')  { e.preventDefault(); tryJump(); }
+    if (e.code === 'ArrowDown')                       { e.preventDefault(); trySlide(); }
+  });
+  let touchStartY = 0;
+  canvas.addEventListener('touchstart', (e) => { e.preventDefault(); touchStartY = e.touches[0].clientY; }, { passive: false });
+  canvas.addEventListener('touchend',   (e) => {
+    e.preventDefault();
+    if (e.changedTouches[0].clientY - touchStartY > 40) trySlide(); else tryJump();
+  }, { passive: false });
+
+  // ─────────────────────────────────────────────────────────────
+  //  ME UPDATE
+  // ─────────────────────────────────────────────────────────────
+  // Send state to server every N frames
+  let sendTimer = 0;
+  const SEND_RATE = 2; // send every 2 frames (~30 updates/sec)
+
+  function updateMe() {
+    if (!me.alive) return;
+    me.vy += GRAVITY; me.y += me.vy;
+    if (me.y >= GROUND_Y) {
+      me.y = GROUND_Y; me.vy = 0; me.onGround = true; me.jumpsLeft = 2;
+    } else { me.onGround = false; }
+    if (me.isSliding) { me.slideTimer--; if (me.slideTimer <= 0) me.isSliding = false; }
+    if (me.onGround && !me.isSliding) me.legAngle += 0.18;
+
+    // Send state to server
+    sendTimer++;
+    if (sendTimer >= SEND_RATE) {
+      sendTimer = 0;
+      send({
+        type: 'state',
+        x: me.x, y: me.y,
+        isSliding: me.isSliding,
+        onGround:  me.onGround,
+        legAngle:  me.legAngle,
+        score:     Math.floor(score),
+      });
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  //  START GAME (called when server sends 'start')
+  // ─────────────────────────────────────────────────────────────
+  function startGame() {
+    Object.assign(me, { y: GROUND_Y, vy: 0, onGround: true, jumpsLeft: 2,
+      isSliding: false, slideTimer: 0, legAngle: 0, alive: true });
+    score = 0; coins = 0; scrollSpeed = 4; groundOffset = 0; frameCount = 0;
+    obstacles = []; obstacleTimer = 80;
+    coinObjects = []; coinTimer = 60;
+    deathParticles = []; particles = []; floaters = []; coinBursts = [];
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  //  GAME LOOP
+  // ─────────────────────────────────────────────────────────────
+  function gameLoop() {
+    frameCount++;
+
+    // Always scroll background on countdown too
+    if (gameState === 'countdown') {
+      groundOffset += 2;
+      countdownTimer++;
+      updateStars();
+    }
+
+    if (gameState === 'running' || gameState === 'dead') {
+      scrollSpeed   = 4 + Math.floor(frameCount / 300) * 0.5;
+      groundOffset += scrollSpeed;
+      updateStars();
+      updateObstacles();
+      updateCoins();
+      updateParticles();
+      updateCoinBursts();
+      updateFloaters();
+      updateKillFeed();
+      updateDeathParticles();
+
+      if (gameState === 'running') {
+        score += 0.1;
+        updateMe();
+        checkCollisions();
+        checkCoinCollisions();
+      }
+    }
+
+    // ── DRAW ──
+    drawBackground();
+    drawGround();
+
+    if (gameState !== 'lobby' && gameState !== 'waiting') {
+      drawObstacles();
+      drawCoins();
+      drawCoinBursts();
+
+      // Draw remote players behind local player
+      Object.values(remotePlayers).forEach(p => {
+        drawStickmanAt(p.x, p.y, p.isSliding, p.onGround, p.legAngle, p.color, p.alive, p.name, false);
+      });
+
+      // Draw local player on top
+      drawStickmanAt(me.x, me.y, me.isSliding, me.onGround, me.legAngle, myColor, me.alive, 'You', true);
+
+      drawParticles();
+      drawDeathParticles();
+      drawFloaters();
+      drawKillFeed();
+      drawHUD();
+    }
+
+    if (gameState === 'countdown') drawCountdown();
+    if (gameState === 'gameover')  drawGameOverScreen();
+
+    requestAnimationFrame(gameLoop);
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  //  INIT
+  // ─────────────────────────────────────────────────────────────
+  initStars();
+  connectWS();
+  gameLoop();
+
+  // Allow pressing Enter to join
+  document.getElementById('nameInput').addEventListener('keydown', (e) => {
+    if (e.code === 'Enter') joinGame();
+  });
+</script>
+</body>
+</html>
